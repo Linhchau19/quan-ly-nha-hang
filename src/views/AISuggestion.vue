@@ -93,7 +93,7 @@ async function sendMessage(customMessage = '') {
   isSending.value = true
 
   try {
-    const response = await fetch('http://localhost:3000/api/chat', {
+  const response = await fetch('https://restaurant-backend-0fhe.onrender.com/api/chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -120,7 +120,7 @@ async function sendMessage(customMessage = '') {
 
     messages.value.push({
       role: 'assistant',
-      content: 'Xin lỗi, hiện tại mình chưa thể kết nối AI. Bạn hãy kiểm tra Backend đang chạy tại cổng 3000 nhé!'
+     content: 'Xin lỗi, hiện tại mình chưa thể kết nối AI. Vui lòng thử lại sau nhé!'
     })
   } finally {
     isSending.value = false
