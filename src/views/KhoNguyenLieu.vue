@@ -1,8 +1,8 @@
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed , watch} from 'vue'
 
-const ingredients = ref([
+const defaultIngredients = [
   {
     id: 'NL001',
     name: 'Gạo tẻ',
@@ -63,7 +63,36 @@ const ingredients = ref([
     unitPrice: 55000,
     supplier: 'Đại lý Minh Phát'
   }
-])
+]
+
+function loadIngredients() {
+  try {
+    const saved = localStorage.getItem('restaurantIngredients')
+
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (Array.isArray(parsed)) return parsed
+    }
+  } catch (error) {
+    console.error('Lỗi đọc dữ liệu kho:', error)
+  }
+
+  return defaultIngredients
+}
+
+const ingredients = ref(loadIngredients())
+
+watch(
+  ingredients,
+  (newIngredients) => {
+    localStorage.setItem(
+      'restaurantIngredients',
+      JSON.stringify(newIngredients)
+    )
+  },
+  { deep: true }
+)
+
 
 const keyword = ref('')
 const filterStatus = ref('Tất cả')
@@ -83,12 +112,41 @@ const emptyForm = () => ({
 
 const form = ref(emptyForm())
 
+
 const showStockModal = ref(false)
 const selectedIngredient = ref(null)
+
 const stockForm = ref({
   type: 'in',
-  quantity: 1
+  quantity: 1,
+  note: ''
 })
+
+// Đọc lịch sử nhập xuất kho
+function loadStockHistory() {
+  try {
+    const saved = localStorage.getItem('restaurantStockHistory')
+    const parsed = saved ? JSON.parse(saved) : []
+    return Array.isArray(parsed) ? parsed : []
+  } catch (error) {
+    console.error('Lỗi đọc lịch sử kho:', error)
+    return []
+  }
+}
+
+const stockHistory = ref(loadStockHistory())
+
+watch(
+  stockHistory,
+  (newHistory) => {
+    localStorage.setItem(
+      'restaurantStockHistory',
+      JSON.stringify(newHistory)
+    )
+  },
+  { deep: true }
+)
+
 
 const getStatus = (item) => {
   return item.quantity <= item.minQuantity ? 'Sắp hết' : 'Còn hàng'
@@ -192,38 +250,61 @@ function deleteIngredient(id) {
 
 function openStockModal(item, type) {
   selectedIngredient.value = item
+
   stockForm.value = {
     type,
-    quantity: 1
+    quantity: 1,
+    note: ''
   }
+
   showStockModal.value = true
 }
 
 function saveStock() {
   const amount = Number(stockForm.value.quantity)
 
-  if (!amount || amount <= 0) {
+  if (!Number.isFinite(amount) || amount <= 0) {
     alert('Vui lòng nhập số lượng hợp lệ!')
     return
   }
 
+  if (!selectedIngredient.value) return
+
+  const ingredient = selectedIngredient.value
+
   if (
     stockForm.value.type === 'out' &&
-    amount > selectedIngredient.value.quantity
+    amount > ingredient.quantity
   ) {
     alert('Số lượng xuất vượt quá số lượng tồn kho!')
     return
   }
 
+  const beforeQuantity = ingredient.quantity
+
   if (stockForm.value.type === 'in') {
-    selectedIngredient.value.quantity += amount
+    ingredient.quantity += amount
   } else {
-    selectedIngredient.value.quantity -= amount
+    ingredient.quantity -= amount
   }
+
+  stockHistory.value.unshift({
+    id: 'GD' + Date.now(),
+    ingredientId: ingredient.id,
+    ingredientName: ingredient.name,
+    type: stockForm.value.type,
+    quantity: amount,
+    unit: ingredient.unit,
+    beforeQuantity,
+    afterQuantity: ingredient.quantity,
+    note: stockForm.value.note.trim(),
+    date: new Date().toISOString()
+  })
 
   showStockModal.value = false
   selectedIngredient.value = null
 }
+
 </script>
 
 <template>
@@ -359,137 +440,214 @@ function saveStock() {
         </table>
       </div>
     </div>
+    
+<div class="content-card history-card">
+  <div class="history-heading">
+    <div>
+      <h2>Lịch sử nhập xuất kho</h2>
+      <p>Theo dõi các giao dịch nguyên liệu</p>
+    </div>
+    <span>{{ stockHistory.length }} giao dịch</span>
+  </div>
 
-    <!-- Form thêm và chỉnh sửa nguyên liệu -->
-    <div v-if="showForm" class="modal-overlay">
-      <div class="modal">
-        <h2>
-          {{ editingId ? 'Cập nhật nguyên liệu' : 'Thêm nguyên liệu mới' }}
-        </h2>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Thời gian</th>
+          <th>Mã NL</th>
+          <th>Nguyên liệu</th>
+          <th>Loại giao dịch</th>
+          <th>Số lượng</th>
+          <th>Tồn trước</th>
+          <th>Tồn sau</th>
+          <th>Ghi chú</th>
+        </tr>
+      </thead>
 
-        <div class="form-grid">
-          <div class="form-group">
-            <label>Tên nguyên liệu</label>
-            <input v-model="form.name" placeholder="Nhập tên nguyên liệu" />
-          </div>
+      <tbody>
+        <tr v-for="item in stockHistory" :key="item.id">
+          <td>{{ new Date(item.date).toLocaleString('vi-VN') }}</td>
+          <td>{{ item.ingredientId }}</td>
+          <td>{{ item.ingredientName }}</td>
+          <td>
+            <span
+              :class="item.type === 'in' ? 'status-good' : 'status-low'"
+              class="status"
+            >
+              {{ item.type === 'in' ? 'Nhập kho' : 'Xuất kho' }}
+            </span>
+          </td>
+          <td>{{ item.quantity }} {{ item.unit }}</td>
+          <td>{{ item.beforeQuantity }} {{ item.unit }}</td>
+          <td>{{ item.afterQuantity }} {{ item.unit }}</td>
+          <td>{{ item.note || '—' }}</td>
+        </tr>
 
-          <div class="form-group">
-            <label>Danh mục</label>
-            <select v-model="form.category">
-              <option>Rau củ</option>
-              <option>Thịt</option>
-              <option>Hải sản</option>
-              <option>Ngũ cốc</option>
-              <option>Gia vị</option>
-              <option>Đồ uống</option>
-              <option>Khác</option>
-            </select>
-          </div>
+        <tr v-if="stockHistory.length === 0">
+          <td colspan="8" class="empty">
+            Chưa có giao dịch nhập xuất kho.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
 
-          <div class="form-group">
-            <label>Số lượng tồn</label>
-            <input v-model.number="form.quantity" type="number" min="0" />
-          </div>
 
-          <div class="form-group">
-            <label>Đơn vị tính</label>
-            <select v-model="form.unit">
-              <option>kg</option>
-              <option>gram</option>
-              <option>lít</option>
-              <option>chai</option>
-              <option>thùng</option>
-              <option>cái</option>
-            </select>
-          </div>
+<!-- Form thêm và chỉnh sửa nguyên liệu -->
+<div v-if="showForm" class="modal-overlay">
+  <div class="modal">
+    <h2>
+      {{ editingId ? 'Cập nhật nguyên liệu' : 'Thêm nguyên liệu mới' }}
+    </h2>
 
-          <div class="form-group">
-            <label>Định mức tối thiểu</label>
-            <input
-              v-model.number="form.minQuantity"
-              type="number"
-              min="0"
-            />
-          </div>
+    <div class="form-grid">
+      <div class="form-group full-width">
+        <label>Tên nguyên liệu</label>
+        <input
+          v-model="form.name"
+          type="text"
+          placeholder="Nhập tên nguyên liệu"
+        />
+      </div>
 
-          <div class="form-group">
-            <label>Đơn giá (VNĐ)</label>
-            <input
-              v-model.number="form.unitPrice"
-              type="number"
-              min="0"
-            />
-          </div>
+      <div class="form-group">
+        <label>Danh mục</label>
+        <select v-model="form.category">
+          <option>Rau củ</option>
+          <option>Thịt</option>
+          <option>Hải sản</option>
+          <option>Ngũ cốc</option>
+          <option>Gia vị</option>
+          <option>Đồ uống</option>
+          <option>Khác</option>
+        </select>
+      </div>
 
-          <div class="form-group full-width">
-            <label>Nhà cung cấp</label>
-            <input
-              v-model="form.supplier"
-              placeholder="Nhập tên nhà cung cấp"
-            />
-          </div>
-        </div>
+      <div class="form-group">
+        <label>Số lượng tồn</label>
+        <input
+          v-model.number="form.quantity"
+          type="number"
+          min="0"
+          placeholder="Nhập số lượng tồn"
+        />
+      </div>
 
-        <div class="modal-actions">
-          <button class="btn-cancel" @click="showForm = false">
-            Hủy
-          </button>
+      <div class="form-group">
+        <label>Đơn vị tính</label>
+        <select v-model="form.unit">
+          <option>kg</option>
+          <option>gram</option>
+          <option>lít</option>
+          <option>chai</option>
+          <option>thùng</option>
+          <option>cái</option>
+        </select>
+      </div>
 
-          <button class="btn-primary" @click="saveIngredient">
-            Lưu thông tin
-          </button>
-        </div>
+      <div class="form-group">
+        <label>Định mức tối thiểu</label>
+        <input
+          v-model.number="form.minQuantity"
+          type="number"
+          min="0"
+          placeholder="Nhập định mức"
+        />
+      </div>
+
+      <div class="form-group">
+        <label>Đơn giá (VNĐ)</label>
+        <input
+          v-model.number="form.unitPrice"
+          type="number"
+          min="0"
+          placeholder="Nhập đơn giá"
+        />
+      </div>
+
+      <div class="form-group full-width">
+        <label>Nhà cung cấp</label>
+        <input
+          v-model="form.supplier"
+          type="text"
+          placeholder="Nhập tên nhà cung cấp"
+        />
       </div>
     </div>
 
-    <!-- Form nhập kho / xuất kho -->
-    <div v-if="showStockModal" class="modal-overlay">
-      <div class="modal stock-modal">
-        <h2>
-          {{ stockForm.type === 'in' ? 'Nhập kho' : 'Xuất kho' }}
-        </h2>
+    <div class="modal-actions">
+      <button class="btn-cancel" @click="showForm = false">
+        Hủy
+      </button>
 
-        <p class="stock-description">
-          Nguyên liệu:
-          <strong>{{ selectedIngredient?.name }}</strong>
-        </p>
-
-        <p class="stock-description">
-          Số lượng hiện tại:
-          <strong>
-            {{ selectedIngredient?.quantity }}
-            {{ selectedIngredient?.unit }}
-          </strong>
-        </p>
-
-        <div class="form-group">
-          <label>Số lượng {{ stockForm.type === 'in' ? 'nhập' : 'xuất' }}</label>
-          <input
-            v-model.number="stockForm.quantity"
-            type="number"
-            min="1"
-          />
-        </div>
-
-        <div class="modal-actions">
-          <button
-            class="btn-cancel"
-            @click="showStockModal = false"
-          >
-            Hủy
-          </button>
-
-          <button class="btn-primary" @click="saveStock">
-            Xác nhận
-          </button>
-        </div>
-      </div>
+      <button class="btn-primary" @click="saveIngredient">
+        Lưu thông tin
+      </button>
     </div>
+  </div>
+</div>
+
+<!-- Form nhập kho / xuất kho -->
+<div v-if="showStockModal" class="modal-overlay">
+  <div class="modal stock-modal">
+    <h2>
+      {{ stockForm.type === 'in' ? 'Nhập kho' : 'Xuất kho' }}
+    </h2>
+
+    <p class="stock-description">
+      Nguyên liệu:
+      <strong>{{ selectedIngredient?.name }}</strong>
+    </p>
+
+    <p class="stock-description">
+      Số lượng hiện tại:
+      <strong>
+        {{ selectedIngredient?.quantity }}
+        {{ selectedIngredient?.unit }}
+      </strong>
+    </p>
+
+    <div class="form-group">
+      <label>Số lượng {{ stockForm.type === 'in' ? 'nhập' : 'xuất' }}</label>
+      <input
+        v-model.number="stockForm.quantity"
+        type="number"
+        min="1"
+        placeholder="Nhập số lượng"
+      />
+    </div>
+
+    <div class="form-group">
+      <label>Ghi chú</label>
+      <input
+        v-model="stockForm.note"
+        type="text"
+        placeholder="Ví dụ: Nhập hàng từ nhà cung cấp..."
+      />
+    </div>
+
+    <div class="modal-actions">
+      <button
+        class="btn-cancel"
+        @click="showStockModal = false"
+      >
+        Hủy
+      </button>
+
+      <button class="btn-primary" @click="saveStock">
+        Xác nhận
+      </button>
+    </div>
+  </div>
+</div>
 
   </div>
 </template>
 
 <style scoped>
+
 .inventory-page {
   color: #25352d;
 }
@@ -563,10 +721,12 @@ function saveStock() {
   color: #d18a22;
 }
 
-.content-card {
+.content-card,
+.history-card {
   background: white;
   border: 1px solid #e4ece6;
   padding: 20px;
+  margin-top: 22px;
 }
 
 .toolbar {
@@ -579,21 +739,23 @@ function saveStock() {
   flex: 1;
 }
 
-input,
-select {
+.inventory-page input,
+.inventory-page select {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #dce6df;
-  padding: 10px 12px;
+  border: 1px solid #bdcec2;
+  border-radius: 3px;
+  padding: 11px 12px;
   outline: none;
-  background: white;
-  color: #26352c;
+  background: #fff;
+  color: #25352d;
   font-size: 14px;
 }
 
-input:focus,
-select:focus {
-  border-color: #52a879;
+.inventory-page input:focus,
+.inventory-page select:focus {
+  border-color: #237a50;
+  box-shadow: 0 0 0 2px rgba(35, 122, 80, 0.12);
 }
 
 .toolbar select {
@@ -686,10 +848,11 @@ td {
   padding: 25px;
 }
 
+/* Lớp phủ form */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 25, 19, 0.55);
+  background: rgba(10, 20, 14, 0.68);
   display: flex;
   justify-content: center;
   align-items: center;
@@ -697,37 +860,71 @@ td {
   padding: 20px;
 }
 
+
+/* Form thêm và chỉnh sửa */
 .modal {
-  background: white;
-  width: 100%;
-  max-width: 580px;
-  padding: 25px;
-  box-shadow: 0 15px 45px rgba(0, 0, 0, 0.18);
+  background: #ffffff;
+  color: #25352d;
+  width: 95%;
+  max-width: 680px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 30px;
+  box-sizing: border-box;
+  border: 1px solid #dce8df;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.25);
 }
 
 .modal h2 {
-  margin: 0 0 22px;
-  color: #237a50;
-  font-size: 21px;
+  margin: 0 0 25px;
+  color: #185c3b;
+  font-size: 23px;
 }
 
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 22px;
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  margin-bottom: 15px;
+  gap: 9px;
+  margin-bottom: 8px;
+  min-width: 0;
 }
 
 .form-group label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #52645a;
+  font-size: 15px;
+  font-weight: 700;
+  color: #344b3c;
+}
+
+.modal .form-group input,
+.modal .form-group select {
+  display: block;
+  width: 100%;
+  height: 52px;
+  box-sizing: border-box;
+  padding: 12px 15px;
+  font-size: 16px;
+  color: #25352d;
+  background: #ffffff;
+  border: 1.5px solid #aebfb3;
+  border-radius: 4px;
+}
+
+.modal .form-group input:focus,
+.modal .form-group select:focus {
+  outline: none;
+  border-color: #237a50;
+  box-shadow: 0 0 0 3px rgba(35, 122, 80, 0.15);
+}
+
+.modal .form-group input::placeholder {
+  color: #89958d;
+  font-size: 14px;
 }
 
 .full-width {
@@ -737,43 +934,27 @@ td {
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 12px;
+  margin-top: 25px;
 }
 
 .modal-actions button {
-  padding: 10px 17px;
+  min-width: 120px;
+  min-height: 46px;
+  padding: 10px 18px;
   cursor: pointer;
   border: none;
-}
-
-.btn-cancel {
-  background: #edf1ee;
-  color: #53645a;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .stock-modal {
-  max-width: 420px;
+  max-width: 480px;
 }
 
-.stock-description {
-  color: #68776e;
-  font-size: 14px;
-  margin-bottom: 12px;
-}
-
-.stock-description strong {
-  color: #237a50;
-}
-
-@media (max-width: 800px) {
-  .stats-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .page-header {
-    align-items: flex-start;
-    flex-direction: column;
+@media (max-width: 650px) {
+  .modal {
+    padding: 20px;
   }
 
   .form-grid {
@@ -783,5 +964,61 @@ td {
   .full-width {
     grid-column: auto;
   }
+}
+
+
+@media (max-width: 650px) {
+  .modal {
+    padding: 20px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .full-width {
+    grid-column: auto;
+  }
+  
+/* Làm lớn các ô nhập thông tin nguyên liệu */
+.modal .form-group input,
+.modal .form-group select,
+.modal .form-group textarea {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  padding: 14px 16px;
+  box-sizing: border-box;
+  font-size: 16px;
+  color: #25352d;
+  background: #ffffff;
+  border: 1.5px solid #aebfb3;
+  border-radius: 4px;
+}
+
+/* Nhãn tên trường */
+.modal .form-group label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #25352d;
+}
+
+/* Khi bấm vào ô nhập */
+.modal .form-group input:focus,
+.modal .form-group select:focus,
+.modal .form-group textarea:focus {
+  outline: none;
+  border-color: #237a50;
+  box-shadow: 0 0 0 3px rgba(35, 122, 80, 0.15);
+}
+
+/* Chữ gợi ý trong ô nhập */
+.modal .form-group input::placeholder {
+  color: #89958d;
+  font-size: 14px;
+}
+
 }
 </style>

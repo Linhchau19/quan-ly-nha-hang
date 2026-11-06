@@ -1,8 +1,9 @@
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed,watch  } from 'vue'
 
-const employees = ref([
+
+const defaultEmployees = [
   {
     id: 'NV001',
     name: 'Nguyễn Văn Nam',
@@ -39,7 +40,38 @@ const employees = ref([
     salary: 6500000,
     status: 'Nghỉ việc'
   }
-])
+]
+
+function loadEmployees() {
+  try {
+    const saved = localStorage.getItem('restaurantEmployees')
+
+    if (saved) {
+      const parsed = JSON.parse(saved)
+
+      if (Array.isArray(parsed)) {
+        return parsed
+      }
+    }
+  } catch (error) {
+    console.error('Lỗi đọc dữ liệu nhân viên:', error)
+  }
+
+  return defaultEmployees
+}
+
+const employees = ref(loadEmployees())
+
+watch(
+  employees,
+  (newEmployees) => {
+    localStorage.setItem(
+      'restaurantEmployees',
+      JSON.stringify(newEmployees)
+    )
+  },
+  { deep: true }
+)
 
 const keyword = ref('')
 const filterPosition = ref('Tất cả')
@@ -100,16 +132,53 @@ function openEditForm(employee) {
 }
 
 function saveEmployee() {
-  if (!form.value.name.trim() || !form.value.phone.trim()) {
+  const phone = form.value.phone.trim()
+  const email = form.value.email.trim()
+  const salary = Number(form.value.salary)
+
+  if (!form.value.name.trim() || !phone) {
     alert('Vui lòng nhập họ tên và số điện thoại!')
     return
   }
+
+  if (!/^0\d{9}$/.test(phone)) {
+    alert('Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 0!')
+    return
+  }
+
+  if (
+    employees.value.some(
+      employee =>
+        employee.phone === phone &&
+        employee.id !== editingId.value
+    )
+  ) {
+    alert('Số điện thoại này đã được sử dụng!')
+    return
+  }
+
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    alert('Email không hợp lệ!')
+    return
+  }
+
+  if (!Number.isFinite(salary) || salary < 0) {
+    alert('Mức lương không hợp lệ!')
+    return
+  }
+
+  form.value.phone = phone
+  form.value.email = email
+  form.value.salary = salary
 
   if (editingId.value) {
     const employee = employees.value.find(
       e => e.id === editingId.value
     )
-    Object.assign(employee, form.value)
+
+    if (employee) {
+      Object.assign(employee, form.value)
+    }
   } else {
     employees.value.push({
       id: 'NV' + String(Date.now()).slice(-5),
