@@ -1,9 +1,29 @@
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
+import { useTableStore } from '../stores/tableStore.js'
 
+const tableStore = useTableStore()
 const keyword = ref('')
 
+// Ngày đặt bàn sớm nhất: ngày mai
+const minBookingDate = computed(() => {
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+
+  const year = tomorrow.getFullYear()
+  const month = String(tomorrow.getMonth() + 1).padStart(2, '0')
+  const day = String(tomorrow.getDate()).padStart(2, '0')
+
+  return `${year}-${month}-${day}`
+})
+
+// Danh sách bàn còn trống
+const availableTables = computed(() =>
+  tableStore.tables.filter(table => table.status === 'Trống')
+)
+
+// Form đặt bàn
 const form = ref({
   customer: '',
   phone: '',
@@ -14,35 +34,58 @@ const form = ref({
   note: ''
 })
 
-const availableTables = ref([
-  'Bàn 01',
-  'Bàn 04',
-  'Bàn 06'
-])
+// Đọc dữ liệu đặt bàn
+const loadBookings = () => {
+  try {
+    const saved = localStorage.getItem('restaurant_bookings')
 
-const bookings = ref([
-  {
-    id: 'DB001',
-    customer: 'Nguyễn Văn An',
-    phone: '0901234567',
-    date: '2026-11-04',
-    time: '18:00',
-    guests: 4,
-    table: 'Bàn 01',
-    status: 'Đã xác nhận'
-  },
-  {
-    id: 'DB002',
-    customer: 'Trần Thị Bình',
-    phone: '0912345678',
-    date: '2026-11-04',
-    time: '19:00',
-    guests: 2,
-    table: 'Bàn 04',
-    status: 'Chờ xác nhận'
+    if (saved !== null) {
+      const parsed = JSON.parse(saved)
+      return Array.isArray(parsed) ? parsed : []
+    }
+  } catch (error) {
+    console.error('Không thể đọc dữ liệu đặt bàn:', error)
   }
-])
 
+  return [
+    {
+      id: 'DB001',
+      customer: 'Nguyễn Văn An',
+      phone: '0901234567',
+      date: '2026-11-04',
+      time: '18:00',
+      guests: 4,
+      table: 'Bàn 01',
+      status: 'Đã xác nhận'
+    },
+    {
+      id: 'DB002',
+      customer: 'Trần Thị Bình',
+      phone: '0912345678',
+      date: '2026-11-04',
+      time: '19:00',
+      guests: 2,
+      table: 'Bàn 04',
+      status: 'Chờ xác nhận'
+    }
+  ]
+}
+
+const bookings = ref(loadBookings())
+
+// Tự động lưu dữ liệu
+watch(
+  bookings,
+  (newBookings) => {
+    localStorage.setItem(
+      'restaurant_bookings',
+      JSON.stringify(newBookings)
+    )
+  },
+  { deep: true }
+)
+
+// Tìm kiếm phiếu đặt bàn
 const filteredBookings = computed(() => {
   return bookings.value.filter(item =>
     item.customer.toLowerCase().includes(keyword.value.toLowerCase()) ||
@@ -51,6 +94,7 @@ const filteredBookings = computed(() => {
   )
 })
 
+// Thêm phiếu đặt bàn
 const addBooking = () => {
   if (
     !form.value.customer.trim() ||
@@ -63,20 +107,49 @@ const addBooking = () => {
     return
   }
 
-  const newId = 'DB' + String(bookings.value.length + 1).padStart(3, '0')
+  if (form.value.date < minBookingDate.value) {
+    alert('Bạn phải đặt bàn trước ít nhất 1 ngày!')
+    return
+  }
+
+  if (form.value.guests < 1 || form.value.guests > 30) {
+    alert('Số lượng khách phải từ 1 đến 30 người!')
+    return
+  }
+
+  // Kiểm tra bàn đã được đặt đúng ngày và giờ chưa
+  const isDuplicate = bookings.value.some(booking =>
+    booking.table === form.value.table &&
+    booking.date === form.value.date &&
+    booking.time === form.value.time &&
+    booking.status !== 'Đã hủy'
+  )
+
+  if (isDuplicate) {
+    alert('Bàn này đã có phiếu đặt vào thời gian bạn chọn. Vui lòng chọn bàn hoặc giờ khác!')
+    return
+  }
+
+  const maxId = bookings.value.reduce((max, item) => {
+    const number = Number(item.id.replace('DB', ''))
+    return Math.max(max, number || 0)
+  }, 0)
+
+  const newId = 'DB' + String(maxId + 1).padStart(3, '0')
 
   bookings.value.push({
     id: newId,
-    customer: form.value.customer,
-    phone: form.value.phone,
+    customer: form.value.customer.trim(),
+    phone: form.value.phone.trim(),
     date: form.value.date,
     time: form.value.time,
     guests: form.value.guests,
     table: form.value.table,
+    note: form.value.note,
     status: 'Chờ xác nhận'
   })
 
-  alert('Thêm phiếu đặt bàn thành công!')
+  alert('Đặt bàn thành công! Thông tin đã được lưu.')
 
   form.value = {
     customer: '',
@@ -89,19 +162,64 @@ const addBooking = () => {
   }
 }
 
+// Cập nhật trạng thái phiếu đặt bàn
 const updateStatus = (booking) => {
-  booking.status = booking.status === 'Chờ xác nhận'
-    ? 'Đã xác nhận'
-    : 'Chờ xác nhận'
-}
+  if (booking.status === 'Chờ xác nhận') {
+    booking.status = 'Đã xác nhận'
+    alert('Đã xác nhận đặt bàn!')
+  }
 
-const cancelBooking = (id) => {
-  if (confirm('Bạn có chắc chắn muốn hủy phiếu đặt bàn này?')) {
-    bookings.value = bookings.value.map(item =>
-      item.id === id
-        ? { ...item, status: 'Đã hủy' }
-        : item
+  else if (booking.status === 'Đã xác nhận') {
+    const table = tableStore.tables.find(
+      item => item.name === booking.table
     )
+
+    if (!table) {
+      alert('Không tìm thấy bàn trong hệ thống!')
+      return
+    }
+
+    if (table.status === 'Đang phục vụ') {
+      alert('Bàn hiện đang phục vụ một khách khác!')
+      return
+    }
+
+    booking.status = 'Đang phục vụ'
+    table.status = 'Đang phục vụ'
+
+    alert('Đã xác nhận khách đến!')
+  }
+
+  else if (booking.status === 'Đang phục vụ') {
+    const table = tableStore.tables.find(
+      item => item.name === booking.table
+    )
+
+    booking.status = 'Hoàn thành'
+
+    if (table) {
+      table.status = 'Trống'
+    }
+
+    alert('Đã hoàn thành phiếu đặt bàn!')
+  }
+}
+localStorage.setItem(
+  'restaurant_bookings',
+  JSON.stringify(bookings.value)
+)
+
+window.dispatchEvent(new Event('restaurantBookingsUpdated'))
+
+// Hủy phiếu đặt bàn
+const cancelBooking = (id) => {
+  const booking = bookings.value.find(item => item.id === id)
+
+  if (!booking) return
+
+  if (confirm('Bạn có chắc chắn muốn hủy phiếu đặt bàn này?')) {
+    booking.status = 'Đã hủy'
+    alert('Đã hủy phiếu đặt bàn!')
   }
 }
 </script>
@@ -109,22 +227,24 @@ const cancelBooking = (id) => {
 <template>
   <div class="booking-page">
 
-    <div class="page-header">
+    <!-- Tiêu đề -->
+    <header class="page-header">
       <div>
-        <h1>Quản lý đặt bàn</h1>
-        <p>Tiếp nhận và quản lý thông tin đặt bàn của khách hàng</p>
+        <h1>Đặt bàn</h1>
+        <p>Quản lý phiếu đặt bàn trong nhà hàng</p>
       </div>
-    </div>
+    </header>
 
-    <!-- FORM ĐẶT BÀN -->
+    <!-- Form đặt bàn -->
     <div class="booking-form-card">
       <h2>Thông tin đặt bàn</h2>
 
       <form @submit.prevent="addBooking">
 
         <div class="form-grid">
+
           <div class="form-group">
-            <label>Họ tên khách hàng *</label>
+            <label>Họ tên khách hàng</label>
             <input
               v-model="form.customer"
               type="text"
@@ -134,7 +254,7 @@ const cancelBooking = (id) => {
           </div>
 
           <div class="form-group">
-            <label>Số điện thoại *</label>
+            <label>Số điện thoại</label>
             <input
               v-model="form.phone"
               type="tel"
@@ -144,16 +264,18 @@ const cancelBooking = (id) => {
           </div>
 
           <div class="form-group">
-            <label>Ngày đặt *</label>
+            <label>Ngày đặt bàn</label>
             <input
               v-model="form.date"
               type="date"
+              :min="minBookingDate"
               required
             />
+            <small>Vui lòng đặt bàn trước ít nhất 1 ngày.</small>
           </div>
 
           <div class="form-group">
-            <label>Giờ đặt *</label>
+            <label>Giờ đặt bàn</label>
             <input
               v-model="form.time"
               type="time"
@@ -162,7 +284,7 @@ const cancelBooking = (id) => {
           </div>
 
           <div class="form-group">
-            <label>Số lượng khách *</label>
+            <label>Số lượng khách</label>
             <input
               v-model.number="form.guests"
               type="number"
@@ -173,18 +295,20 @@ const cancelBooking = (id) => {
           </div>
 
           <div class="form-group">
-            <label>Chọn bàn *</label>
+            <label>Chọn bàn</label>
             <select v-model="form.table" required>
               <option value="">-- Chọn bàn --</option>
+
               <option
                 v-for="table in availableTables"
-                :key="table"
-                :value="table"
+                :key="table.id"
+                :value="table.name"
               >
-                {{ table }}
+                {{ table.name }} - {{ table.seats }} chỗ
               </option>
             </select>
           </div>
+
         </div>
 
         <div class="form-group note-group">
@@ -192,39 +316,41 @@ const cancelBooking = (id) => {
           <textarea
             v-model="form.note"
             rows="3"
-            placeholder="Nhập yêu cầu thêm của khách hàng..."
+            placeholder="Nhập yêu cầu của khách hàng..."
           ></textarea>
         </div>
 
         <div class="form-actions">
           <button type="submit" class="save-button">
-            + Xác nhận đặt bàn
+            <span>+ Tạo phiếu đặt bàn</span>
           </button>
         </div>
 
       </form>
     </div>
 
-    <!-- DANH SÁCH ĐẶT BÀN -->
+    <!-- Danh sách phiếu đặt bàn -->
     <div class="booking-list-card">
+
       <div class="section-heading">
         <h2>Danh sách phiếu đặt bàn</h2>
 
         <input
           v-model="keyword"
           type="text"
-          placeholder="Tìm tên, mã hoặc số điện thoại..."
+          placeholder="Tìm mã phiếu, tên hoặc số điện thoại..."
         />
       </div>
 
       <div class="table-responsive">
         <table>
+
           <thead>
             <tr>
-              <th>Mã đặt bàn</th>
+              <th>Mã phiếu</th>
               <th>Khách hàng</th>
               <th>Ngày đặt</th>
-              <th>Giờ đặt</th>
+              <th>Giờ</th>
               <th>Số khách</th>
               <th>Bàn</th>
               <th>Trạng thái</th>
@@ -238,13 +364,18 @@ const cancelBooking = (id) => {
               :key="booking.id"
             >
               <td>{{ booking.id }}</td>
+
               <td>
-                <strong>{{ booking.customer }}</strong>
-                <small class="phone">{{ booking.phone }}</small>
+                {{ booking.customer }}
+                <span class="phone">{{ booking.phone }}</span>
               </td>
+
               <td>{{ booking.date }}</td>
+
               <td>{{ booking.time }}</td>
+
               <td>{{ booking.guests }} người</td>
+
               <td>{{ booking.table }}</td>
 
               <td>
@@ -253,6 +384,8 @@ const cancelBooking = (id) => {
                   :class="{
                     waiting: booking.status === 'Chờ xác nhận',
                     confirmed: booking.status === 'Đã xác nhận',
+                    serving: booking.status === 'Đang phục vụ',
+                    completed: booking.status === 'Hoàn thành',
                     cancelled: booking.status === 'Đã hủy'
                   }"
                 >
@@ -262,21 +395,29 @@ const cancelBooking = (id) => {
 
               <td>
                 <div class="action-buttons">
+
                   <button
-                    v-if="booking.status !== 'Đã hủy'"
+                    v-if="booking.status !== 'Đã hủy' && booking.status !== 'Hoàn thành'"
                     class="confirm-button"
                     @click="updateStatus(booking)"
                   >
-                    {{ booking.status === 'Đã xác nhận' ? 'Chờ lại' : 'Xác nhận' }}
+                    {{
+                      booking.status === 'Chờ xác nhận'
+                        ? 'Xác nhận'
+                        : booking.status === 'Đã xác nhận'
+                          ? 'Xác nhận khách đến'
+                          : 'Hoàn thành phiếu'
+                    }}
                   </button>
 
                   <button
-                    v-if="booking.status !== 'Đã hủy'"
+                    v-if="booking.status === 'Chờ xác nhận' || booking.status === 'Đã xác nhận'"
                     class="cancel-button"
                     @click="cancelBooking(booking.id)"
                   >
                     Hủy
                   </button>
+
                 </div>
               </td>
             </tr>
@@ -286,6 +427,7 @@ const cancelBooking = (id) => {
                 Không tìm thấy phiếu đặt bàn
               </td>
             </tr>
+
           </tbody>
         </table>
       </div>
@@ -368,6 +510,11 @@ const cancelBooking = (id) => {
   box-shadow: 0 0 0 3px rgba(82, 168, 121, 0.12);
 }
 
+.form-group small {
+  color: #64748B;
+  font-size: 12px;
+}
+
 .note-group {
   margin-top: 20px;
 }
@@ -410,6 +557,7 @@ const cancelBooking = (id) => {
 
 .section-heading input {
   width: 300px;
+  max-width: 100%;
   padding: 11px 13px;
   border: 1px solid #D1DED5;
   outline: none;
@@ -423,7 +571,7 @@ table {
   width: 100%;
   border-collapse: collapse;
   text-align: left;
-  min-width: 850px;
+  min-width: 950px;
 }
 
 th {
@@ -468,6 +616,16 @@ tbody tr:hover td {
   color: #166534;
 }
 
+.serving {
+  background: #E0F2FE;
+  color: #1E40AF;
+}
+
+.completed {
+  background: #F0FDF4;
+  color: #166534;
+}
+
 .cancelled {
   background: #FEE2E2;
   color: #B91C1C;
@@ -476,6 +634,7 @@ tbody tr:hover td {
 .action-buttons {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .confirm-button,
@@ -484,6 +643,7 @@ tbody tr:hover td {
   padding: 8px 10px;
   cursor: pointer;
   white-space: nowrap;
+  transition: 0.2s;
 }
 
 .confirm-button {
@@ -493,7 +653,7 @@ tbody tr:hover td {
 
 .confirm-button:hover {
   background: #237A50;
-  color: white;
+  color: #FFFFFF;
 }
 
 .cancel-button {
@@ -503,16 +663,16 @@ tbody tr:hover td {
 
 .cancel-button:hover {
   background: #DC2626;
-  color: white;
+  color: #FFFFFF;
 }
 
 .no-data {
   text-align: center;
-  padding: 25px;
   color: #64748B;
+  padding: 30px;
 }
 
-@media (max-width: 750px) {
+@media (max-width: 768px) {
   .form-grid {
     grid-template-columns: 1fr;
   }
@@ -525,6 +685,11 @@ tbody tr:hover td {
   .section-heading input {
     width: 100%;
     box-sizing: border-box;
+  }
+
+  .booking-form-card,
+  .booking-list-card {
+    padding: 18px;
   }
 }
 </style>

@@ -138,12 +138,9 @@ function changeQuantity(order, item, amount) {
   }
 }
 
-function updateStatus(order) {  orderStore.updateStatus(order.id)
-  if (order.status === 'Chờ xác nhận') {
-    order.status = 'Đang chế biến'
-  } else if (order.status === 'Đang chế biến') {
-    order.status = 'Đã phục vụ'
-  }
+function updateStatus(order) {
+  orderStore.updateStatus(order.id)
+
 }
 function cancelOrder(order) {
   if (order.status === 'Đã phục vụ') {
@@ -187,6 +184,8 @@ function createInvoice(order) {
     table: order.table,
     items: order.items.map(item => ({ ...item })),
     amount: orderTotal(order),
+    guests: order.guests || 1,
+    createdAt: order.createdAt || new Date().toISOString().slice(0, 10),
     status: 'Chưa thanh toán',
     date: new Date().toLocaleString('vi-VN')
   }
@@ -397,15 +396,18 @@ order.status === 'Đã hủy' ? 'cancelled' : 'served'
 
   <!-- Cập nhật trạng thái -->
   <button
-    v-if="order.status !== 'Đã phục vụ' && order.status !== 'Đã hủy'"
-    class="btn-status"
-    @click="updateStatus(order)"
-  >
-    {{ order.status === 'Chờ xác nhận'
-      ? 'Bắt đầu chế biến'
-      : 'Xác nhận đã phục vụ' }}
-  </button>
-
+  v-if="order.status !== 'Đã phục vụ' && order.status !== 'Đã hủy'"
+  class="btn-status"
+  @click="updateStatus(order)"
+>
+  {{
+    order.status === 'Chờ xác nhận'
+      ? 'Xác nhận đơn'
+      : order.status === 'Đã xác nhận'
+        ? 'Bắt đầu chế biến'
+        : 'Xác nhận đã phục vụ'
+  }}
+</button>
   <!-- Hủy đơn -->
   <button
     v-if="order.status !== 'Đã phục vụ' && order.status !== 'Đã hủy'"

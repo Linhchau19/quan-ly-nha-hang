@@ -80,10 +80,21 @@ const formatMoney = amount =>
 
 const selectedInvoice = ref(null)
 
-const payInvoice = invoice => {
+const payInvoice = (invoice) => {
   if (confirm('Xác nhận thanh toán hóa đơn này?')) {
     invoice.status = 'Đã thanh toán'
 
+    // Lấy ngày thanh toán theo giờ địa phương
+    const now = new Date()
+    const paidAt = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0')
+    ].join('-')
+
+    invoice.paidAt = paidAt
+
+    // Đọc danh sách hóa đơn đã lưu
     const savedInvoices = JSON.parse(
       localStorage.getItem('restaurantInvoices') || '[]'
     )
@@ -93,13 +104,23 @@ const payInvoice = invoice => {
     )
 
     if (index !== -1) {
-      savedInvoices[index].status = 'Đã thanh toán'
-
-      localStorage.setItem(
-        'restaurantInvoices',
-        JSON.stringify(savedInvoices)
-      )
+      savedInvoices[index] = {
+        ...savedInvoices[index],
+        status: 'Đã thanh toán',
+        paidAt
+      }
+    } else {
+      savedInvoices.push({ ...invoice })
     }
+
+    // Lưu lại dữ liệu
+    localStorage.setItem(
+      'restaurantInvoices',
+      JSON.stringify(savedInvoices)
+    )
+
+    // Thông báo cho trang Tổng quan cập nhật doanh thu
+    window.dispatchEvent(new Event('restaurantInvoicesUpdated'))
 
     alert('Thanh toán thành công!')
   }

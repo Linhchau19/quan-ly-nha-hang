@@ -77,6 +77,10 @@ export const useOrderStore = defineStore('order', {
       state.orders.filter(
         order => order.status === 'Chờ xác nhận'
       ).length,
+      confirmedOrders: (state) =>
+  state.orders.filter(
+    order => order.status === 'Đã xác nhận'
+  ).length,
 
     cookingOrders: (state) =>
       state.orders.filter(
@@ -124,19 +128,21 @@ export const useOrderStore = defineStore('order', {
       }
     },
 
-    updateStatus(orderId) {
-      const order = this.orders.find(
-        item => item.id === orderId
-      )
+   updateStatus(orderId) {
+  const order = this.orders.find(
+    item => item.id === orderId
+  )
 
-      if (!order) return
+  if (!order) return
 
-      if (order.status === 'Chờ xác nhận') {
-        order.status = 'Đang chế biến'
-      } else if (order.status === 'Đang chế biến') {
-        order.status = 'Đã phục vụ'
-      }
-    }
+  if (order.status === 'Chờ xác nhận') {
+    order.status = 'Đã xác nhận'
+  } else if (order.status === 'Đã xác nhận') {
+    order.status = 'Đang chế biến'
+  } else if (order.status === 'Đang chế biến') {
+    order.status = 'Đã phục vụ'
+  }
+}
   }
 
 })

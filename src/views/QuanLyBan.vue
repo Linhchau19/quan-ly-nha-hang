@@ -1,19 +1,55 @@
-
 <script setup>
 import { ref, computed } from 'vue'
+import { useTableStore } from '../stores/tableStore.js'
 
 const keyword = ref('')
 const filterStatus = ref('Tất cả')
 
-const tables = ref([
-  { id: 1, name: 'Bàn 01', area: 'Tầng 1', seats: 4, status: 'Trống' },
-  { id: 2, name: 'Bàn 02', area: 'Tầng 1', seats: 6, status: 'Đang phục vụ' },
-  { id: 3, name: 'Bàn 03', area: 'Tầng 1', seats: 4, status: 'Đã đặt' },
-  { id: 4, name: 'Bàn 04', area: 'Tầng 2', seats: 8, status: 'Trống' },
-  { id: 5, name: 'Bàn 05', area: 'Tầng 2', seats: 4, status: 'Đang phục vụ' },
-  { id: 6, name: 'Bàn 06', area: 'Sân vườn', seats: 6, status: 'Trống' }
-])
+const tableStore = useTableStore()
 
+// Đọc các phiếu đặt bàn đã lưu
+const loadBookings = () => {
+  try {
+    return JSON.parse(localStorage.getItem('restaurant_bookings')) || []
+  } catch {
+    return []
+  }
+}
+
+const bookings = ref(loadBookings())
+
+// Lấy ngày hiện tại theo giờ địa phương
+const today = (() => {
+  const date = new Date()
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+})()
+
+// Tính trạng thái bàn dựa trên phiếu đặt
+const tables = computed(() => {
+  return tableStore.tables.map(table => {
+    const hasConfirmedBooking = bookings.value.some(booking =>
+      booking.table === table.name &&
+      booking.status === 'Đã xác nhận' &&
+      booking.date >= today
+    )
+
+    let status = table.status
+
+    if (table.status !== 'Đang phục vụ' && hasConfirmedBooking) {
+      status = 'Đã đặt'
+    }
+
+    return {
+      ...table,
+      status
+    }
+  })
+})
+
+// Tìm kiếm và lọc bàn
 const filteredTables = computed(() => {
   return tables.value.filter(table => {
     const matchKeyword =
@@ -28,28 +64,24 @@ const filteredTables = computed(() => {
   })
 })
 
-const countStatus = status => {
+// Đếm số bàn theo trạng thái
+const countStatus = (status) => {
   if (status === 'Tất cả') return tables.value.length
-  return tables.value.filter(table => table.status === status).length
+
+  return tables.value.filter(table =>
+    table.status === status
+  ).length
 }
 
+// Thêm bàn
 const addTable = () => {
-  const nextId = tables.value.length
-    ? Math.max(...tables.value.map(t => t.id)) + 1
-    : 1
-
-  tables.value.push({
-    id: nextId,
-    name: `Bàn ${String(nextId).padStart(2, '0')}`,
-    area: 'Tầng 1',
-    seats: 4,
-    status: 'Trống'
-  })
+  tableStore.addTable()
 }
 
-const deleteTable = id => {
+// Xóa bàn
+const deleteTable = (id) => {
   if (confirm('Bạn có chắc chắn muốn xóa bàn này?')) {
-    tables.value = tables.value.filter(table => table.id !== id)
+    tableStore.deleteTable(id)
   }
 }
 </script>

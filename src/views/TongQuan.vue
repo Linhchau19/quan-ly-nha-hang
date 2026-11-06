@@ -1,31 +1,174 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useTableStore } from '../stores/tableStore'
 
 const keyword = ref('')
+const tableStore = useTableStore()
 
-const stats = [
-  { title: 'Tổng số bàn', value: 20 },
-  { title: 'Bàn đang phục vụ', value: 8 },
-  { title: 'Bàn còn trống', value: 10 },
-  { title: 'Doanh thu hôm nay', value: '5.250.000đ' }
-]
+// Đọc dữ liệu hóa đơn đã lưu
+const loadInvoices = () => {
+  try {
+    return JSON.parse(
+      localStorage.getItem('restaurantInvoices') || '[]'
+    )
+  } catch (error) {
+    console.error('Lỗi đọc hóa đơn:', error)
+    return []
+  }
+}
+// Đọc danh sách đặt bàn
+const loadBookings = () => {
+  try {
+    return JSON.parse(
+      localStorage.getItem('restaurant_bookings') || '[]'
+    )
+  } catch (error) {
+    console.error('Lỗi đọc đặt bàn:', error)
+    return []
+  }
+}
 
-const tables = ref([
-  { id: 1, name: 'Bàn 01', seats: 4, status: 'Đang phục vụ' },
-  { id: 2, name: 'Bàn 02', seats: 2, status: 'Trống' },
-  { id: 3, name: 'Bàn 03', seats: 6, status: 'Đã đặt' },
-  { id: 4, name: 'Bàn 04', seats: 4, status: 'Trống' },
-  { id: 5, name: 'Bàn 05', seats: 4, status: 'Đang phục vụ' },
-  { id: 6, name: 'Bàn 06', seats: 2, status: 'Trống' }
-])
+const bookings = ref(loadBookings())
+
+// Cập nhật danh sách đặt bàn
+const refreshBookings = () => {
+  bookings.value = loadBookings()
+}
+
+const invoices = ref(loadInvoices())
+
+// Lấy ngày hiện tại theo giờ địa phương
+const getToday = () => {
+  const now = new Date()
+
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  ].join('-')
+}
+
+// Cập nhật hóa đơn khi có thanh toán mới
+const refreshInvoices = () => {
+  invoices.value = loadInvoices()
+}
+onMounted(() => {
+  window.addEventListener(
+    'restaurantInvoicesUpdated',
+    refreshInvoices
+  )
+  window.addEventListener('storage', refreshInvoices)
+
+  window.addEventListener(
+    'restaurantBookingsUpdated',
+    refreshBookings
+  )
+})
+
+onUnmounted(() => {
+  window.removeEventListener(
+    'restaurantInvoicesUpdated',
+    refreshInvoices
+  )
+  window.removeEventListener('storage', refreshInvoices)
+
+  window.removeEventListener(
+    'restaurantBookingsUpdated',
+    refreshBookings
+  )
+})
+
+// Tính doanh thu hôm nay
+const todayRevenue = computed(() => {
+  const today = getToday()
+
+  return invoices.value
+    .filter(invoice => {
+      if (invoice.status !== 'Đã thanh toán') {
+        return false
+      }
+
+      // Ưu tiên ngày thanh toán
+      if (invoice.paidAt) {
+        return invoice.paidAt === today
+      }
+
+      // Hỗ trợ hóa đơn cũ có ngày dạng YYYY-MM-DD
+      return invoice.date?.slice(0, 10) === today
+    })
+    .reduce((sum, invoice) => {
+      const amount = Number(
+        invoice.amount ?? invoice.subtotal ?? 0
+      )
+
+      return sum + amount
+    }, 0)
+})
+
+// Định dạng tiền Việt Nam
+const formatMoney = amount =>
+  new Intl.NumberFormat('vi-VN').format(amount) + ' đ'
+// Tổng số khách đã đến nhà hàng hôm nay
+const customerVisits = computed(() => {
+  const today = getToday()
+
+  // Khách từ đơn gọi món
+  const orderCustomers = invoices.value
+    .filter(invoice =>
+      invoice.createdAt === today &&
+      invoice.status !== 'Đã hủy'
+    )
+    .reduce((sum, invoice) => {
+      return sum + Number(invoice.guests || 1)
+    }, 0)
+
+  // Khách từ đặt bàn đã đến nhưng chưa có hóa đơn
+  const bookingCustomers = bookings.value
+    .filter(booking =>
+      booking.date === today &&
+      ['Đang phục vụ', 'Hoàn thành'].includes(booking.status) &&
+      !invoices.value.some(invoice =>
+        invoice.table === booking.table &&
+        invoice.createdAt === today
+      )
+    )
+    .reduce((sum, booking) => {
+      return sum + Number(booking.guests || 0)
+    }, 0)
+
+  return orderCustomers + bookingCustomers
+})
+
+const tables = tableStore.tables
 
 const filteredTables = computed(() =>
-  tables.value.filter(table =>
+  tables.filter(table =>
     table.name.toLowerCase().includes(keyword.value.toLowerCase())
   )
 )
+const stats = computed(() => [
+  {
+    title: 'Tổng số bàn',
+    value: tableStore.totalTables
+  },
+  {
+    title: 'Bàn đang phục vụ',
+    value: tableStore.servingTables
+  },
+  {
+    title: 'Bàn còn trống',
+    value: tableStore.emptyTables
+  },
+  {
+    title: 'Doanh thu hôm nay',
+    value: formatMoney(todayRevenue.value)
+  },
+  {
+    title: 'Khách hàng lượt ghé',
+    value: customerVisits.value + ' người'
+  }
+])
 </script>
-
 <template>
   <div class="overview">
     <header class="topbar">
@@ -85,6 +228,7 @@ const filteredTables = computed(() =>
 </template>
 
 <style scoped>
+
 .overview {
   color: #1F2937;
 }
@@ -105,11 +249,12 @@ const filteredTables = computed(() =>
   margin-bottom: 30px;
 }
 
+/* Dashboard và khung nội dung góc vuông */
 .stat-card,
 .content-card {
   background: white;
   padding: 23px;
-  border-radius: 14px;
+  border-radius: 0;
   border: 1px solid #E2EDE5;
   box-shadow: 0 4px 15px rgba(17, 24, 39, 0.05);
 }
@@ -142,7 +287,12 @@ const filteredTables = computed(() =>
 .section-heading input {
   padding: 11px 14px;
   border: 1px solid #D1DED5;
-  border-radius: 8px;
+  border-radius: 0;
+  outline: none;
+}
+
+.section-heading input:focus {
+  border-color: #237A50;
 }
 
 .table-grid {
@@ -151,17 +301,18 @@ const filteredTables = computed(() =>
   gap: 18px;
 }
 
+/* Thẻ bàn góc vuông */
 .table-card {
   background: #F8FBF9;
   border: 1px solid #E2EDE5;
-  border-radius: 12px;
+  border-radius: 0;
   padding: 20px;
 }
 
 .status {
   display: inline-block;
   padding: 6px 12px;
-  border-radius: 20px;
+  border-radius: 0;
   font-size: 12px;
   font-weight: bold;
 }
@@ -202,4 +353,6 @@ const filteredTables = computed(() =>
     flex-direction: column;
   }
 }
+
+
 </style>

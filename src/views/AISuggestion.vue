@@ -4,67 +4,70 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
-// Lấy thực đơn đã lưu từ trang Quản lý thực đơn
+// Đọc thực đơn từ localStorage
 function loadMenu() {
   try {
     const savedMenu = JSON.parse(
-      localStorage.getItem('restaurantMenu') || 'null'
+      localStorage.getItem('restaurantMenu') || '[]'
     )
-
-    if (Array.isArray(savedMenu)) {
-      return savedMenu
-    }
+    return Array.isArray(savedMenu) ? savedMenu : []
   } catch (error) {
     console.error('Lỗi đọc thực đơn:', error)
+    return []
   }
-
-  return []
 }
 
 const menu = ref(loadMenu())
 
-// Sở thích của khách hàng
+// Chỉ lấy món đang kinh doanh
+const activeMenu = computed(() =>
+  menu.value.filter(food => food.status !== 'Ngừng bán')
+)
+
+// Bộ lọc món ăn
 const selectedCategory = ref('Tất cả')
 const maxPrice = ref(0)
 const keyword = ref('')
 
-// Danh mục món ăn
-const categories = computed(() => {
-  const values = menu.value.map(food => food.category).filter(Boolean)
-  return ['Tất cả', ...new Set(values)]
-})
+// Danh mục thực đơn
+const categories = computed(() => [
+  'Tất cả',
+  ...new Set(activeMenu.value.map(food => food.category).filter(Boolean))
+])
 
-// Lọc món ăn phù hợp
+// Danh sách món phù hợp với bộ lọc
 const recommendations = computed(() => {
-  return menu.value.filter(food => {
-    const isSelling = food.status !== 'Ngừng bán'
-
+  return activeMenu.value.filter(food => {
     const matchCategory =
       selectedCategory.value === 'Tất cả' ||
       food.category === selectedCategory.value
 
     const matchPrice =
-      maxPrice.value <= 0 || Number(food.price) <= maxPrice.value
+      maxPrice.value <= 0 ||
+      Number(food.price) <= Number(maxPrice.value)
 
-    const matchKeyword = (food.name || '')
-      .toLowerCase()
-      .includes(keyword.value.toLowerCase())
+    const matchKeyword =
+      (food.name || '')
+        .toLowerCase()
+        .includes(keyword.value.trim().toLowerCase())
 
-    return isSelling && matchCategory && matchPrice && matchKeyword
+    return matchCategory && matchPrice && matchKeyword
   })
 })
 
-// Trạng thái chatbot Gemini
+// Chatbot AI Gemini
 const chatInput = ref('')
 const isSending = ref(false)
 const chatMessages = ref(null)
+
 const messages = ref([
   {
     role: 'assistant',
-    content: 'Xin chào! ✨ Mình là trợ lý AI của nhà hàng. Bạn thích món gì hoặc có ngân sách bao nhiêu? Mình sẽ giúp bạn chọn món phù hợp nhé!'
+    content: 'Xin chào! Mình là trợ lý AI của nhà hàng. Bạn có thể hỏi về thực đơn, giá món ăn hoặc nhờ mình tư vấn lựa chọn món phù hợp nhé!'
   }
 ])
-// Tự động cuộn xuống tin nhắn mới nhất
+
+// Tự động cuộn đến tin nhắn mới nhất
 watch(messages, async () => {
   await nextTick()
 
@@ -73,13 +76,14 @@ watch(messages, async () => {
       chatMessages.value.scrollHeight
   }
 }, { deep: true })
-// Định dạng câu trả lời của Gemini
+
+// Hiển thị nội dung Markdown an toàn
 function renderMessage(content) {
-  const html = marked.parse(content || '')
-  return DOMPurify.sanitize(html)
+  return DOMPurify.sanitize(marked.parse(content || ''))
 }
-// Gửi câu hỏi đến Gemini Backend
-async function sendMessage(customMessage = '') {
+
+// Gửi nội dung đến Gemini Backend
+async function sendMessage(customMessage = '', menuForAI = null) {
   const message = (customMessage || chatInput.value).trim()
 
   if (!message || isSending.value) return
@@ -93,21 +97,26 @@ async function sendMessage(customMessage = '') {
   isSending.value = true
 
   try {
-  const response = await fetch('https://restaurant-backend-0fhe.onrender.com/api/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        message,
-        menu: menu.value.filter(food => food.status !== 'Ngừng bán')
-      })
-    })
+    const response = await fetch(
+      'https://restaurant-backend-0fhe.onrender.com/api/chat',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          message,
+          menu: menuForAI || activeMenu.value
+        })
+      }
+    )
 
     const data = await response.json()
 
     if (!response.ok) {
-      throw new Error(data.error || 'Không thể nhận phản hồi từ Gemini.')
+      throw new Error(
+        data.error || 'Không thể nhận phản hồi từ Gemini.'
+      )
     }
 
     messages.value.push({
@@ -120,15 +129,24 @@ async function sendMessage(customMessage = '') {
 
     messages.value.push({
       role: 'assistant',
-     content: 'Xin lỗi, hiện tại mình chưa thể kết nối AI. Vui lòng thử lại sau nhé!'
+      content: 'Hiện tại mình chưa thể kết nối AI. Vui lòng thử lại sau nhé!'
     })
+
   } finally {
     isSending.value = false
   }
 }
 
-// Gợi ý món ăn bằng AI dựa trên bộ lọc
+// AI đề xuất món theo nhu cầu đã lọc
 function suggestFood() {
+  if (activeMenu.value.length === 0) {
+    messages.value.push({
+      role: 'assistant',
+      content: 'Thực đơn hiện chưa có món ăn nào đang kinh doanh để đề xuất.'
+    })
+    return
+  }
+
   const conditions = []
 
   if (selectedCategory.value !== 'Tất cả') {
@@ -140,114 +158,84 @@ function suggestFood() {
   }
 
   if (keyword.value.trim()) {
-    conditions.push(`Tên món có chứa: ${keyword.value}`)
+    conditions.push(`Tên món chứa: ${keyword.value.trim()}`)
   }
 
   const filterText = conditions.length
-    ? conditions.join(', ')
-    : 'Không có điều kiện cụ thể'
+    ? conditions.join('; ')
+    : 'Không giới hạn danh mục, giá tiền hoặc tên món'
+
+  const foodList = recommendations.value
+
+  const prompt = `
+Hãy đóng vai trò là nhân viên tư vấn món ăn của nhà hàng.
+
+Nhu cầu của khách hàng: ${filterText}.
+
+Dựa trên danh sách món ăn được cung cấp:
+1. Chọn tối đa 3 món phù hợp nhất.
+2. Nêu tên món và giá tiền chính xác.
+3. Giải thích ngắn gọn lý do đề xuất.
+4. Có thể gợi ý món ăn hoặc đồ uống đi kèm nếu phù hợp.
+5. Không tự tạo món ăn hoặc giá tiền không có trong thực đơn.
+
+Hãy trình bày thân thiện, ngắn gọn và dễ đọc.
+`
 
   sendMessage(
-    `Hãy tư vấn và gợi ý cho tôi những món ăn phù hợp. ${filterText}. Hãy dựa trên thực đơn nhà hàng được cung cấp, nêu tên món, giá tiền và lý do đề xuất.`
+    prompt,
+    foodList.length > 0 ? foodList : activeMenu.value
   )
 }
 
-// Đặt lại bộ lọc
+// Xóa bộ lọc
 function resetFilter() {
   selectedCategory.value = 'Tất cả'
   maxPrice.value = 0
   keyword.value = ''
 }
 
+// Định dạng tiền Việt Nam
 function formatMoney(value) {
   return Number(value || 0).toLocaleString('vi-VN') + 'đ'
 }
 </script>
+
+
 <template>
   <div class="ai-page">
 
+    <!-- Tiêu đề -->
     <div class="page-header">
-      <h1>✨ AI Suggestion</h1>
-      <p>Trợ lý thông minh hỗ trợ gợi ý món ăn cho khách hàng</p>
-    </div>
-
-    <!-- Giới thiệu AI -->
-    <div class="ai-banner">
-      <div class="ai-icon">✦</div>
-
       <div>
-        <h2>Trợ lý gợi ý món ăn</h2>
-        <p>
-          Hãy chọn sở thích và ngân sách để hệ thống tìm ra
-          những món ăn phù hợp từ thực đơn nhà hàng.
-        </p>
-        <span class="ai-status">● AI Recommendation đang hoạt động</span>
+        <h1>AI Suggestion</h1>
+        <p>Trợ lý AI hỗ trợ tư vấn và lựa chọn món ăn thông minh</p>
       </div>
+
+      <span class="ai-badge">
+        <span class="status-dot"></span>
+        Gemini AI
+      </span>
     </div>
 
-    <!-- CHATBOT GEMINI -->
-    <div class="chat-card">
-      <div class="chat-header">
-        <div class="chat-avatar">✦</div>
-
-        <div>
-          <h2>Gemini AI Assistant</h2>
-          <p>Trợ lý tư vấn món ăn thông minh</p>
-        </div>
-
-        <span class="chat-online">● Online</span>
-      </div>
-
-<div class="chat-messages" ref="chatMessages">
-        <div
-          v-for="(message, index) in messages"
-          :key="index"
-          :class="['message-row', message.role]"
-        >
-          <div class="message-avatar">
-            {{ message.role === 'assistant' ? '✦' : '👤' }}
-          </div>
-
-          <div
-  class="message-bubble"
-  v-html="renderMessage(message.content)"
-></div>
-        </div>
-
-        <div v-if="isSending" class="message-row assistant">
-          <div class="message-avatar">✦</div>
-          <div class="message-bubble typing">
-            Gemini đang suy nghĩ...
-          </div>
-        </div>
-      </div>
-
-      <form class="chat-input-area" @submit.prevent="sendMessage()">
-        <input
-          v-model="chatInput"
-          type="text"
-          placeholder="Hỏi AI về món ăn, giá tiền, ngân sách..."
-          :disabled="isSending"
-        />
-
-        <button type="submit" :disabled="isSending || !chatInput.trim()">
-          {{ isSending ? 'Đang gửi...' : '➤ Gửi' }}
-        </button>
-      </form>
-
-      <div class="chat-hint">
-        ✨ Gemini AI sẽ tư vấn dựa trên thực đơn hiện tại của nhà hàng.
-      </div>
-    </div>
-
-    <!-- Bộ lọc sở thích -->
+    <!-- Bộ lọc món ăn -->
     <div class="filter-card">
-      <h2>🎯 Khám phá món ăn phù hợp</h2>
+
+      <div class="section-heading">
+        <div>
+          <h2>Khám phá món ăn</h2>
+          <p>Chọn nhu cầu để AI tư vấn món ăn phù hợp</p>
+        </div>
+
+        <span class="food-count">
+          {{ recommendations.length }} món phù hợp
+        </span>
+      </div>
 
       <div class="filter-grid">
 
         <div class="form-group">
-          <label>Bạn muốn ăn gì?</label>
+          <label>Danh mục món ăn</label>
 
           <select v-model="selectedCategory">
             <option
@@ -272,107 +260,143 @@ function formatMoney(value) {
         </div>
 
         <div class="form-group">
-          <label>Tìm tên món ăn</label>
+          <label>Tìm kiếm món ăn</label>
 
           <input
             type="text"
             v-model="keyword"
-            placeholder="Nhập tên món..."
+            placeholder="Nhập tên món ăn..."
           />
         </div>
 
       </div>
 
-      <div class="filter-actions">
-        <button class="suggest-button" @click="suggestFood">
-          ✨ Gợi ý món ăn
-        </button>
+      <div class="filter-footer">
+        <p>
+          <span class="filter-icon">✦</span>
+          AI sẽ dựa trên thực đơn đang kinh doanh để tư vấn.
+        </p>
 
-        <button class="reset-button" @click="resetFilter">
-          Đặt lại
-        </button>
+        <div class="filter-actions">
+          <button
+            type="button"
+            class="reset-button"
+            @click="resetFilter"
+          >
+            Đặt lại
+          </button>
+
+          <button
+            type="button"
+            class="suggest-button"
+            :disabled="isSending"
+            @click="suggestFood"
+          >
+            ✨ Đề xuất bằng AI
+          </button>
+        </div>
       </div>
+
     </div>
 
-    <!-- Kết quả -->
-    <div class="result-section">
+    <!-- Chatbot Gemini -->
+    <div class="chat-card">
 
-      <div class="result-heading">
-        <div>
-          <h2>🍽️ Món ăn được đề xuất</h2>
-          <p>
-            {{ hasSearched
-              ? 'Kết quả dựa trên sở thích bạn đã chọn.'
-              : 'Các món ăn phù hợp từ thực đơn nhà hàng.' }}
-          </p>
+      <div class="chat-header">
+
+        <div class="chat-avatar">
+          ✦
         </div>
 
-        <span class="result-count">
-          {{ recommendations.length }} món
+        <div class="chat-title">
+          <h2>Trợ lý AI Gemini</h2>
+          <p>Tư vấn thực đơn và hỗ trợ lựa chọn món ăn</p>
+        </div>
+
+        <span class="chat-online">
+          <span class="status-dot"></span>
+          Online
         </span>
+
       </div>
 
-      <div v-if="recommendations.length > 0" class="food-grid">
+      <!-- Nội dung trò chuyện -->
+      <div class="chat-messages" ref="chatMessages">
 
         <div
-          v-for="food in recommendations"
-          :key="food.id"
-          class="food-card"
+          v-for="(message, index) in messages"
+          :key="index"
+          :class="['message-row', message.role]"
         >
-          <img
-            v-if="food.image"
-            :src="food.image"
-            :alt="food.name"
-            class="food-image"
-          />
 
-          <div v-else class="food-placeholder">
-            🍽️
+          <div class="message-avatar">
+            {{ message.role === 'assistant' ? '✦' : '👤' }}
           </div>
 
-          <div class="food-info">
-            <span class="food-category">
-              {{ food.category || 'Món ăn' }}
-            </span>
+          <div
+            class="message-bubble"
+            v-html="renderMessage(message.content)"
+          ></div>
 
-            <h3>{{ food.name }}</h3>
+        </div>
 
-            <p class="food-description">
-              {{ food.description || 'Món ăn hấp dẫn từ thực đơn nhà hàng.' }}
-            </p>
+        <!-- Đang xử lý -->
+        <div v-if="isSending" class="message-row assistant">
 
-            <div class="food-bottom">
-              <strong>{{ formatMoney(food.price) }}</strong>
-              <span>✨ Phù hợp</span>
-            </div>
+          <div class="message-avatar">✦</div>
+
+          <div class="message-bubble typing">
+            Gemini đang phân tích và trả lời...
           </div>
+
         </div>
 
       </div>
 
-      <div v-else class="empty-result">
-        <span>🍽️</span>
-        <h3>Chưa tìm thấy món ăn phù hợp</h3>
-        <p>Hãy thử thay đổi danh mục hoặc ngân sách nhé!</p>
+      <!-- Nhập câu hỏi -->
+      <form
+        class="chat-input-area"
+        @submit.prevent="sendMessage()"
+      >
+
+        <input
+          v-model="chatInput"
+          type="text"
+          placeholder="Nhập câu hỏi về món ăn, giá tiền..."
+          :disabled="isSending"
+        />
+
+        <button
+          type="submit"
+          :disabled="isSending || !chatInput.trim()"
+        >
+          {{ isSending ? 'Đang gửi...' : 'Gửi ➤' }}
+        </button>
+
+      </form>
+
+      <div class="chat-hint">
+        ✦ Gemini AI tư vấn dựa trên dữ liệu thực đơn hiện tại của nhà hàng.
       </div>
 
-    </div>
-
-    <div class="ai-note">
-      <strong>💡 Lưu ý:</strong>
-      Đây là phiên bản gợi ý thông minh mô phỏng dựa trên dữ liệu thực đơn
-      và điều kiện lọc. Chưa kết nối mô hình AI hoặc API bên ngoài.
     </div>
 
   </div>
 </template>
 
 <style scoped>
+
 .ai-page {
   color: #1F2937;
+  width: 100%;
 }
 
+/* TIÊU ĐỀ */
 .page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
   margin-bottom: 25px;
 }
 
@@ -384,67 +408,76 @@ function formatMoney(value) {
 
 .page-header p {
   color: #64748B;
-  margin-top: 8px;
-}
-
-/* BANNER AI */
-.ai-banner {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  padding: 25px;
-  background: linear-gradient(120deg, #123B2B, #237A50);
-  color: white;
-  margin-bottom: 25px;
-}
-
-.ai-icon {
-  width: 65px;
-  height: 65px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background: rgba(255,255,255,0.15);
-  font-size: 35px;
-  flex-shrink: 0;
-}
-
-.ai-banner h2 {
-  margin: 0 0 8px;
-}
-
-.ai-banner p {
-  margin: 0 0 12px;
-  color: #E2F5E9;
+  margin: 8px 0 0;
   font-size: 14px;
-  line-height: 1.6;
 }
 
-.ai-status {
-  color: #A7F3D0;
+.ai-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #EAF5ED;
+  color: #237A50;
+  padding: 9px 14px;
   font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  border-radius: 50%;
+  background: #22C55E;
+}
+
+/* KHUNG CHUNG */
+.filter-card,
+.chat-card {
+  background: #FFFFFF;
+  border: 1px solid #E2EDE5;
+  box-shadow: 0 4px 15px rgba(17, 24, 39, 0.05);
+  margin-bottom: 25px;
 }
 
 /* BỘ LỌC */
-.filter-card,
-.result-section {
-  background: white;
-  padding: 25px;
-  border: 1px solid #E2EDE5;
-  box-shadow: 0 4px 12px rgba(17,24,39,0.04);
-  margin-bottom: 25px;
+.filter-card {
+  padding: 24px;
 }
 
-.filter-card h2,
-.result-heading h2 {
-  margin: 0 0 20px;
-  font-size: 19px;
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 22px;
+}
+
+.section-heading h2 {
   color: #111827;
+  font-size: 19px;
+  margin: 0 0 7px;
+}
+
+.section-heading p {
+  color: #64748B;
+  font-size: 13px;
+  margin: 0;
+}
+
+.food-count {
+  background: #EAF5ED;
+  color: #237A50;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .filter-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
 }
 
@@ -452,36 +485,63 @@ function formatMoney(value) {
   display: block;
   font-size: 13px;
   font-weight: 600;
+  color: #374151;
   margin-bottom: 9px;
 }
 
 .form-group input,
 .form-group select {
   width: 100%;
+  box-sizing: border-box;
   padding: 12px;
   border: 1px solid #D1DED5;
+  background: #FFFFFF;
+  color: #374151;
+  font-size: 13px;
   outline: none;
-  box-sizing: border-box;
-  background: white;
+  border-radius: 0;
 }
 
 .form-group input:focus,
 .form-group select:focus {
-  border-color: #52A879;
+  border-color: #237A50;
+}
+
+.filter-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #E8F0EA;
+}
+
+.filter-footer p {
+  color: #64748B;
+  font-size: 12px;
+  margin: 0;
+}
+
+.filter-icon {
+  color: #237A50;
+  font-weight: bold;
+  margin-right: 5px;
 }
 
 .filter-actions {
   display: flex;
   gap: 10px;
-  margin-top: 22px;
 }
 
 .suggest-button,
 .reset-button {
-  padding: 11px 20px;
+  padding: 11px 18px;
   border: none;
   cursor: pointer;
+  font-size: 13px;
   font-weight: 600;
+  border-radius: 0;
 }
 
 .suggest-button {
@@ -489,165 +549,26 @@ function formatMoney(value) {
   color: white;
 }
 
-.suggest-button:hover {
+.suggest-button:hover:not(:disabled) {
   background: #185C3B;
 }
 
+.suggest-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .reset-button {
-  background: #E5EDE7;
+  background: #E8F0EA;
   color: #374151;
 }
 
-/* KẾT QUẢ */
-.result-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
+.reset-button:hover {
+  background: #DCEBE0;
 }
 
-.result-heading h2 {
-  margin-bottom: 7px;
-}
-
-.result-heading p {
-  color: #64748B;
-  font-size: 13px;
-  margin: 0;
-}
-
-.result-count {
-  background: #DCFCE7;
-  color: #166534;
-  padding: 8px 12px;
-  font-size: 13px;
-  font-weight: bold;
-  white-space: nowrap;
-}
-
-.food-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
-}
-
-.food-card {
-  border: 1px solid #E2EDE5;
-  background: white;
-  overflow: hidden;
-}
-
-.food-image,
-.food-placeholder {
-  width: 100%;
-  height: 175px;
-  object-fit: cover;
-}
-
-.food-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #F0F7F2;
-  font-size: 45px;
-}
-
-.food-info {
-  padding: 16px;
-}
-
-.food-category {
-  color: #237A50;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.food-info h3 {
-  margin: 9px 0;
-  font-size: 17px;
-}
-
-.food-description {
-  color: #64748B;
-  font-size: 13px;
-  line-height: 1.5;
-  min-height: 38px;
-}
-
-.food-bottom {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  margin-top: 15px;
-}
-
-.food-bottom strong {
-  color: #237A50;
-  font-size: 16px;
-}
-
-.food-bottom span {
-  color: #237A50;
-  font-size: 11px;
-}
-
-.empty-result {
-  text-align: center;
-  padding: 45px 15px;
-  color: #64748B;
-}
-
-.empty-result span {
-  font-size: 40px;
-}
-
-.empty-result h3 {
-  color: #374151;
-}
-
-.ai-note {
-  background: #EAF5ED;
-  border-left: 4px solid #237A50;
-  padding: 16px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: #374151;
-}
-
-/* RESPONSIVE */
-@media (max-width: 900px) {
-  .filter-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .food-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 600px) {
-  .filter-grid,
-  .food-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .ai-banner {
-    align-items: flex-start;
-  }
-
-  .filter-actions {
-    flex-wrap: wrap;
-  }
-  
-/* ===== GEMINI CHATBOT ===== */
-
+/* CHATBOT */
 .chat-card {
-  background: #FFFFFF;
-  border: 1px solid #DCEBE0;
-  box-shadow: 0 8px 25px rgba(17, 24, 39, 0.06);
-  margin-bottom: 25px;
   overflow: hidden;
 }
 
@@ -663,20 +584,21 @@ function formatMoney(value) {
 .chat-avatar {
   width: 45px;
   height: 45px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255,255,255,0.16);
-  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   font-size: 25px;
 }
 
-.chat-header h2 {
+.chat-title h2 {
   margin: 0 0 5px;
   font-size: 17px;
 }
 
-.chat-header p {
+.chat-title p {
   margin: 0;
   color: #D1FAE5;
   font-size: 12px;
@@ -684,14 +606,18 @@ function formatMoney(value) {
 
 .chat-online {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   color: #A7F3D0;
   font-size: 12px;
   white-space: nowrap;
 }
 
+/* TIN NHẮN */
 .chat-messages {
-  min-height: 260px;
-  max-height: 380px;
+  min-height: 280px;
+  max-height: 420px;
   overflow-y: auto;
   padding: 24px;
   background: #F7FAF8;
@@ -713,8 +639,8 @@ function formatMoney(value) {
 }
 
 .message-avatar {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   flex-shrink: 0;
   display: flex;
   justify-content: center;
@@ -730,13 +656,12 @@ function formatMoney(value) {
 }
 
 .message-bubble {
-  padding: 12px 15px;
+  padding: 12px 16px;
   background: white;
   border: 1px solid #E2EDE5;
   color: #374151;
   font-size: 13px;
   line-height: 1.7;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
@@ -751,6 +676,50 @@ function formatMoney(value) {
   font-style: italic;
 }
 
+/* ĐỊNH DẠNG NỘI DUNG GEMINI */
+.message-bubble :deep(p) {
+  margin: 0 0 10px;
+  line-height: 1.7;
+}
+
+.message-bubble :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.message-bubble :deep(strong) {
+  color: #237A50;
+  font-weight: 700;
+}
+
+.message-row.user .message-bubble :deep(strong) {
+  color: #FFFFFF;
+}
+
+.message-bubble :deep(ol),
+.message-bubble :deep(ul) {
+  padding-left: 22px;
+  margin: 10px 0;
+}
+
+.message-bubble :deep(li) {
+  margin-bottom: 8px;
+  line-height: 1.7;
+}
+
+.message-bubble :deep(h1),
+.message-bubble :deep(h2),
+.message-bubble :deep(h3) {
+  color: #237A50;
+  margin: 10px 0;
+  font-size: 15px;
+}
+
+.message-bubble :deep(code) {
+  background: #F0F7F2;
+  padding: 2px 5px;
+}
+
+/* KHUNG NHẬP */
 .chat-input-area {
   display: flex;
   gap: 12px;
@@ -765,6 +734,7 @@ function formatMoney(value) {
   border: 1px solid #D1DED5;
   outline: none;
   font-size: 13px;
+  border-radius: 0;
 }
 
 .chat-input-area input:focus {
@@ -795,7 +765,44 @@ function formatMoney(value) {
   font-size: 11px;
 }
 
+/* RESPONSIVE */
+@media (max-width: 900px) {
+  .filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 600px) {
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .page-header h1 {
+    font-size: 23px;
+  }
+
+  .filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .filter-actions {
+    width: 100%;
+  }
+
+  .filter-actions button {
+    flex: 1;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .chat-header {
     padding: 16px;
   }
@@ -815,45 +822,6 @@ function formatMoney(value) {
   .chat-input-area button {
     padding: 0 14px;
   }
-  /* ===== ĐỊNH DẠNG NỘI DUNG GEMINI ===== */
-
-.message-bubble :deep(p) {
-  margin: 0 0 10px;
-  line-height: 1.7;
-}
-
-.message-bubble :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.message-bubble :deep(strong) {
-  color: #237A50;
-  font-weight: 700;
-}
-
-.message-bubble :deep(ol),
-.message-bubble :deep(ul) {
-  padding-left: 22px;
-  margin: 10px 0;
-}
-
-.message-bubble :deep(li) {
-  margin-bottom: 9px;
-  line-height: 1.7;
-}
-
-.message-bubble :deep(h1),
-.message-bubble :deep(h2),
-.message-bubble :deep(h3) {
-  color: #237A50;
-  margin: 10px 0;
-  font-size: 15px;
-}
-
-.message-bubble :deep(code) {
-  background: #F0F7F2;
-  padding: 2px 5px;
-}
-}
 }
 </style>
+

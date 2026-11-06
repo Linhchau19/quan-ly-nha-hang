@@ -1,74 +1,214 @@
 
 <script setup>
-import { ref, computed } from 'vue'
+
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 const period = ref('month')
+const invoices = ref([])
 
-const reports = [
-  {
-    date: '01/11',
-    revenue: 3200000,
-    invoices: 16
-  },
-  {
-    date: '02/11',
-    revenue: 4100000,
-    invoices: 20
-  },
-  {
-    date: '03/11',
-    revenue: 2800000,
-    invoices: 14
-  },
-  {
-    date: '04/11',
-    revenue: 5200000,
-    invoices: 25
-  },
-  {
-    date: '05/11',
-    revenue: 3900000,
-    invoices: 19
-  },
-  {
-    date: '06/11',
-    revenue: 6300000,
-    invoices: 30
+// Đọc hóa đơn từ localStorage
+const loadInvoices = () => {
+  try {
+    const data = JSON.parse(
+      localStorage.getItem('restaurantInvoices') || '[]'
+    )
+    return Array.isArray(data) ? data : []
+  } catch (error) {
+    console.error('Lỗi đọc hóa đơn:', error)
+    return []
   }
-]
+}
 
-const topFoods = ref([
-  { name: 'Cơm chiên hải sản', quantity: 85, revenue: 4250000 },
-  { name: 'Bò lúc lắc', quantity: 72, revenue: 5760000 },
-  { name: 'Gà chiên nước mắm', quantity: 65, revenue: 3900000 },
-  { name: 'Mì xào bò', quantity: 58, revenue: 2900000 },
-  { name: 'Canh chua cá', quantity: 45, revenue: 2250000 }
-])
+const refreshInvoices = () => {
+  invoices.value = loadInvoices()
+}
 
+onMounted(() => {
+  refreshInvoices()
+  window.addEventListener('restaurantInvoicesUpdated', refreshInvoices)
+  window.addEventListener('storage', refreshInvoices)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('restaurantInvoicesUpdated', refreshInvoices)
+  window.removeEventListener('storage', refreshInvoices)
+})
+
+// Lấy ngày hiện tại theo định dạng YYYY-MM-DD
+const getToday = () => {
+  const now = new Date()
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  ].join('-')
+}
+
+// Chuyển ngày hóa đơn về YYYY-MM-DD
+const getInvoiceDate = (invoice) => {
+  if (invoice.paidAt) {
+    return String(invoice.paidAt).slice(0, 10)
+  }
+
+  const value = String(invoice.date || '').trim()
+
+  // Ngày dạng YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10)
+  }
+
+  // Ngày dạng D/M/YYYY hoặc DD/MM/YYYY
+  const match = value.match(
+    /(\d{1,2})\/(\d{1,2})\/(\d{4})/
+  )
+
+  if (match) {
+    return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`
+  }
+
+  return ''
+}
+
+// Tính khoảng thời gian được chọn
+const dateRange = computed(() => {
+  const today = getToday()
+  const now = new Date()
+
+  if (period.value === 'day') {
+    return { start: today, end: today }
+  }
+
+  if (period.value === 'week') {
+    const startDate = new Date(now)
+    startDate.setDate(now.getDate() - 6)
+
+    const start = [
+      startDate.getFullYear(),
+      String(startDate.getMonth() + 1).padStart(2, '0'),
+      String(startDate.getDate()).padStart(2, '0')
+    ].join('-')
+
+    return { start, end: today }
+  }
+
+  const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+
+  return { start, end: today }
+})
+
+// Chỉ lấy hóa đơn đã thanh toán trong kỳ
+const paidInvoices = computed(() => {
+  const { start, end } = dateRange.value
+
+  return invoices.value.filter(invoice => {
+    if (invoice.status !== 'Đã thanh toán') return false
+
+    const date = getInvoiceDate(invoice)
+
+    return date >= start && date <= end
+  })
+})
+
+// Tính tiền hóa đơn
+const getInvoiceAmount = (invoice) => {
+  if (invoice.amount != null) return Number(invoice.amount)
+  if (invoice.subtotal != null) return Number(invoice.subtotal)
+
+  return (invoice.items || []).reduce((sum, item) => {
+    return sum + Number(item.price || 0) * Number(item.quantity || 0)
+  }, 0)
+}
+
+// Tổng doanh thu
 const totalRevenue = computed(() =>
-  reports.reduce((sum, item) => sum + item.revenue, 0)
+  paidInvoices.value.reduce(
+    (sum, invoice) => sum + getInvoiceAmount(invoice),
+    0
+  )
 )
 
-const totalInvoices = computed(() =>
-  reports.reduce((sum, item) => sum + item.invoices, 0)
-)
+// Tổng số hóa đơn
+const totalInvoices = computed(() => paidInvoices.value.length)
 
+// Giá trị hóa đơn trung bình
 const averageRevenue = computed(() =>
   totalInvoices.value
     ? totalRevenue.value / totalInvoices.value
     : 0
 )
 
-const maxRevenue = Math.max(...reports.map(item => item.revenue))
+// Tổng lượt khách từ hóa đơn
+const totalCustomers = computed(() =>
+  paidInvoices.value.reduce(
+    (sum, invoice) => sum + Number(invoice.guests || 1),
+    0
+  )
+)
 
+// Định dạng tiền Việt Nam
 const formatMoney = (value) =>
   new Intl.NumberFormat('vi-VN').format(value) + ' đ'
 
-const chartReports = computed(() => {
-  if (period.value === 'week') return reports.slice(-3)
-  if (period.value === 'day') return reports.slice(-1)
-  return reports
+// Thống kê doanh thu từng ngày
+const reports = computed(() => {
+  const dailyData = {}
+
+  paidInvoices.value.forEach(invoice => {
+    const date = getInvoiceDate(invoice)
+    if (!date) return
+
+    if (!dailyData[date]) {
+      dailyData[date] = {
+        fullDate: date,
+        date: date.slice(8, 10) + '/' + date.slice(5, 7),
+        revenue: 0,
+        invoices: 0
+      }
+    }
+
+    dailyData[date].revenue += getInvoiceAmount(invoice)
+    dailyData[date].invoices += 1
+  })
+
+  return Object.values(dailyData).sort((a, b) =>
+    a.fullDate.localeCompare(b.fullDate)
+  )
 })
+
+// Dữ liệu biểu đồ
+const chartReports = computed(() => reports.value)
+
+const maxRevenue = computed(() =>
+  Math.max(...chartReports.value.map(item => item.revenue), 1)
+)
+
+// Top 5 món ăn bán chạy từ hóa đơn đã thanh toán
+const topFoods = computed(() => {
+  const foods = {}
+
+  paidInvoices.value.forEach(invoice => {
+    ;(invoice.items || []).forEach(item => {
+      const name = item.name || 'Món ăn không tên'
+
+      if (!foods[name]) {
+        foods[name] = {
+          name,
+          quantity: 0,
+          revenue: 0
+        }
+      }
+
+      foods[name].quantity += Number(item.quantity || 0)
+      foods[name].revenue +=
+        Number(item.price || 0) * Number(item.quantity || 0)
+    })
+  })
+
+  return Object.values(foods)
+    .sort((a, b) => b.quantity - a.quantity)
+    .slice(0, 5)
+})
+
 </script>
 
 <template>
@@ -91,7 +231,7 @@ const chartReports = computed(() => {
         <div class="stat-icon green">₫</div>
         <span>Tổng doanh thu</span>
         <h2>{{ formatMoney(totalRevenue) }}</h2>
-        <small>Doanh thu mẫu trong kỳ</small>
+       <small>Doanh thu đã thanh toán trong kỳ</small>
       </div>
 
       <div class="stat-card">
@@ -104,8 +244,8 @@ const chartReports = computed(() => {
       <div class="stat-card">
         <div class="stat-icon orange">◉</div>
         <span>Khách hàng</span>
-        <h2>86</h2>
-        <small>Số liệu khách hàng mẫu</small>
+       <h2>{{ totalCustomers }}</h2>
+<small>Lượt khách trong kỳ</small>
       </div>
 
       <div class="stat-card">
@@ -200,7 +340,7 @@ const chartReports = computed(() => {
 
           <tbody>
             <tr v-for="item in chartReports" :key="item.date">
-              <td>{{ item.date }}/2026</td>
+             <td>{{ item.fullDate.split('-').reverse().join('/') }}</td>
               <td>{{ item.invoices }}</td>
               <td class="revenue-text">
                 {{ formatMoney(item.revenue) }}
