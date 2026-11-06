@@ -160,6 +160,10 @@ const stats = computed(() => [
     value: tableStore.emptyTables
   },
   {
+  title: 'Bàn đã đặt',
+  value: tableStore.bookedTables
+},
+  {
     title: 'Doanh thu hôm nay',
     value: formatMoney(todayRevenue.value)
   },
@@ -244,11 +248,10 @@ const stats = computed(() => [
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 20px;
   margin-bottom: 30px;
 }
-
 /* Dashboard và khung nội dung góc vuông */
 .stat-card,
 .content-card {

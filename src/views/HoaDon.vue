@@ -1,12 +1,14 @@
-
 <script setup>
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+
 function printInvoice() {
   window.print()
 }
-import { ref, computed } from 'vue'
 
 const keyword = ref('')
+const selectedInvoice = ref(null)
 
+// Dữ liệu mẫu khi chưa có hóa đơn thật
 const defaultInvoices = [
   {
     id: 'HD001',
@@ -15,6 +17,7 @@ const defaultInvoices = [
     table: 'Bàn 01',
     amount: 450000,
     status: 'Đã thanh toán',
+    items: []
   },
   {
     id: 'HD002',
@@ -23,7 +26,7 @@ const defaultInvoices = [
     table: 'Bàn 02',
     amount: 680000,
     status: 'Chưa thanh toán',
-  
+    items: []
   },
   {
     id: 'HD003',
@@ -32,101 +35,165 @@ const defaultInvoices = [
     table: 'Bàn 04',
     amount: 320000,
     status: 'Đã thanh toán',
-     
+    items: []
   }
 ]
 
-const savedInvoices = JSON.parse(
-  localStorage.getItem('restaurantInvoices') || '[]'
-)
+// Chuẩn hóa dữ liệu hóa đơn
+function normalizeInvoice(invoice) {
+  const items = Array.isArray(invoice.items)
+    ? invoice.items
+    : []
 
-const invoices = ref([
-  ...defaultInvoices,
-  ...savedInvoices.map(invoice => ({
+  const calculatedAmount = items.reduce((sum, item) => {
+    return sum +
+      Number(item.price || 0) *
+      Number(item.quantity || 0)
+  }, 0)
+
+  return {
     ...invoice,
+    customer: invoice.customer || 'Khách tại bàn',
+    table: invoice.table || 'Chưa xác định',
+    date: invoice.date ||
+      (invoice.createdAt
+        ? String(invoice.createdAt).slice(0, 10)
+        : new Date().toISOString().slice(0, 10)),
+    items,
     amount: Number(
       invoice.amount ??
       invoice.subtotal ??
-      invoice.items?.reduce((sum, item) =>
-        sum + item.price * item.quantity, 0
-      ) ?? 0
-    )
-  }))
-])
+      calculatedAmount
+    ),
+    status: invoice.status || 'Chưa thanh toán'
+  }
+}
 
-const filteredInvoices = computed(() => {
-  return invoices.value.filter(item =>
-    item.id.toLowerCase().includes(keyword.value.toLowerCase()) ||
-    item.customer.toLowerCase().includes(keyword.value.toLowerCase())
+// Đọc hóa đơn từ localStorage
+function loadInvoices() {
+  try {
+    const saved = localStorage.getItem('restaurantInvoices')
+
+    if (saved !== null) {
+      const parsed = JSON.parse(saved)
+
+      if (Array.isArray(parsed)) {
+        return parsed.map(normalizeInvoice)
+      }
+    }
+  } catch (error) {
+    console.error('Lỗi đọc hóa đơn:', error)
+  }
+
+  return defaultInvoices.map(normalizeInvoice)
+}
+
+const invoices = ref(loadInvoices())
+
+// Đồng bộ khi dữ liệu hóa đơn thay đổi
+function refreshInvoices() {
+  invoices.value = loadInvoices()
+}
+
+onMounted(() => {
+  window.addEventListener(
+    'restaurantInvoicesUpdated',
+    refreshInvoices
   )
+
+  window.addEventListener('storage', refreshInvoices)
 })
 
+onUnmounted(() => {
+  window.removeEventListener(
+    'restaurantInvoicesUpdated',
+    refreshInvoices
+  )
+
+  window.removeEventListener('storage', refreshInvoices)
+})
+
+// Tìm kiếm hóa đơn
+const filteredInvoices = computed(() => {
+  const searchText = keyword.value.toLowerCase().trim()
+
+  return invoices.value.filter(invoice => {
+    return (
+      String(invoice.id || '').toLowerCase().includes(searchText) ||
+      String(invoice.customer || '').toLowerCase().includes(searchText) ||
+      String(invoice.table || '').toLowerCase().includes(searchText)
+    )
+  })
+})
+
+// Thống kê
 const paidCount = computed(() =>
-  invoices.value.filter(i => i.status === 'Đã thanh toán').length
+  invoices.value.filter(
+    invoice => invoice.status === 'Đã thanh toán'
+  ).length
 )
 
 const unpaidCount = computed(() =>
-  invoices.value.filter(i => i.status === 'Chưa thanh toán').length
+  invoices.value.filter(
+    invoice => invoice.status === 'Chưa thanh toán'
+  ).length
 )
 
 const revenue = computed(() =>
   invoices.value
-    .filter(i => i.status === 'Đã thanh toán')
-    .reduce((sum, i) => sum + i.amount, 0)
+    .filter(invoice => invoice.status === 'Đã thanh toán')
+    .reduce((sum, invoice) => {
+      return sum + Number(invoice.amount || 0)
+    }, 0)
 )
 
+// Định dạng tiền
 const formatMoney = amount =>
-  new Intl.NumberFormat('vi-VN').format(amount) + ' đ'
+  new Intl.NumberFormat('vi-VN').format(
+    Number(amount || 0)
+  ) + ' đ'
 
-const selectedInvoice = ref(null)
+// Thanh toán hóa đơn
+function payInvoice(invoice) {
+  if (invoice.status !== 'Chưa thanh toán') return
 
-const payInvoice = (invoice) => {
-  if (confirm('Xác nhận thanh toán hóa đơn này?')) {
-    invoice.status = 'Đã thanh toán'
+  if (!confirm('Xác nhận thanh toán hóa đơn này?')) {
+    return
+  }
 
-    // Lấy ngày thanh toán theo giờ địa phương
-    const now = new Date()
-    const paidAt = [
-      now.getFullYear(),
-      String(now.getMonth() + 1).padStart(2, '0'),
-      String(now.getDate()).padStart(2, '0')
-    ].join('-')
+  const now = new Date()
 
-    invoice.paidAt = paidAt
+  const paidAt = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  ].join('-')
 
-    // Đọc danh sách hóa đơn đã lưu
-    const savedInvoices = JSON.parse(
-      localStorage.getItem('restaurantInvoices') || '[]'
-    )
+  invoice.status = 'Đã thanh toán'
+  invoice.paidAt = paidAt
 
-    const index = savedInvoices.findIndex(
-      item => item.id === invoice.id
-    )
-
-    if (index !== -1) {
-      savedInvoices[index] = {
-        ...savedInvoices[index],
-        status: 'Đã thanh toán',
-        paidAt
-      }
-    } else {
-      savedInvoices.push({ ...invoice })
-    }
-
-    // Lưu lại dữ liệu
+  try {
     localStorage.setItem(
       'restaurantInvoices',
-      JSON.stringify(savedInvoices)
+      JSON.stringify(invoices.value)
     )
 
-    // Thông báo cho trang Tổng quan cập nhật doanh thu
-    window.dispatchEvent(new Event('restaurantInvoicesUpdated'))
+    window.dispatchEvent(
+      new Event('restaurantInvoicesUpdated')
+    )
 
     alert('Thanh toán thành công!')
+  } catch (error) {
+    console.error('Lỗi lưu hóa đơn:', error)
+    alert('Không thể lưu thanh toán. Vui lòng thử lại!')
+
+    invoice.status = 'Chưa thanh toán'
+    delete invoice.paidAt
   }
 }
 
-const viewInvoice = invoice => {
+// Xem chi tiết
+function viewInvoice(invoice) {
   selectedInvoice.value = invoice
 }
 </script>

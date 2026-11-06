@@ -1,17 +1,17 @@
 
 <script setup>
-
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 const period = ref('month')
 const invoices = ref([])
 
-// Đọc hóa đơn từ localStorage
-const loadInvoices = () => {
+// Đọc hóa đơn
+function loadInvoices() {
   try {
     const data = JSON.parse(
       localStorage.getItem('restaurantInvoices') || '[]'
     )
+
     return Array.isArray(data) ? data : []
   } catch (error) {
     console.error('Lỗi đọc hóa đơn:', error)
@@ -19,7 +19,8 @@ const loadInvoices = () => {
   }
 }
 
-const refreshInvoices = () => {
+// Cập nhật dữ liệu khi hóa đơn thay đổi
+function refreshInvoices() {
   invoices.value = loadInvoices()
 }
 
@@ -34,9 +35,10 @@ onUnmounted(() => {
   window.removeEventListener('storage', refreshInvoices)
 })
 
-// Lấy ngày hiện tại theo định dạng YYYY-MM-DD
-const getToday = () => {
+// Ngày hiện tại YYYY-MM-DD
+function getToday() {
   const now = new Date()
+
   return [
     now.getFullYear(),
     String(now.getMonth() + 1).padStart(2, '0'),
@@ -44,23 +46,17 @@ const getToday = () => {
   ].join('-')
 }
 
-// Chuyển ngày hóa đơn về YYYY-MM-DD
-const getInvoiceDate = (invoice) => {
-  if (invoice.paidAt) {
-    return String(invoice.paidAt).slice(0, 10)
-  }
+// Chuẩn hóa ngày hóa đơn
+function getInvoiceDate(invoice) {
+  const value = String(
+    invoice.paidAt || invoice.date || ''
+  ).trim()
 
-  const value = String(invoice.date || '').trim()
-
-  // Ngày dạng YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
     return value.slice(0, 10)
   }
 
-  // Ngày dạng D/M/YYYY hoặc DD/MM/YYYY
-  const match = value.match(
-    /(\d{1,2})\/(\d{1,2})\/(\d{4})/
-  )
+  const match = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
 
   if (match) {
     return `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`
@@ -69,10 +65,10 @@ const getInvoiceDate = (invoice) => {
   return ''
 }
 
-// Tính khoảng thời gian được chọn
+// Khoảng thời gian báo cáo
 const dateRange = computed(() => {
-  const today = getToday()
   const now = new Date()
+  const today = getToday()
 
   if (period.value === 'day') {
     return { start: today, end: today }
@@ -91,9 +87,10 @@ const dateRange = computed(() => {
     return { start, end: today }
   }
 
-  const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
-
-  return { start, end: today }
+  return {
+    start: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`,
+    end: today
+  }
 })
 
 // Chỉ lấy hóa đơn đã thanh toán trong kỳ
@@ -105,21 +102,30 @@ const paidInvoices = computed(() => {
 
     const date = getInvoiceDate(invoice)
 
-    return date >= start && date <= end
+    return date && date >= start && date <= end
   })
 })
 
-// Tính tiền hóa đơn
-const getInvoiceAmount = (invoice) => {
-  if (invoice.amount != null) return Number(invoice.amount)
-  if (invoice.subtotal != null) return Number(invoice.subtotal)
+// Tính tổng tiền hóa đơn
+function getInvoiceAmount(invoice) {
+  const items = Array.isArray(invoice.items)
+    ? invoice.items
+    : []
 
-  return (invoice.items || []).reduce((sum, item) => {
-    return sum + Number(item.price || 0) * Number(item.quantity || 0)
+  const calculatedAmount = items.reduce((sum, item) => {
+    return sum +
+      Number(item.price || 0) *
+      Number(item.quantity || 0)
   }, 0)
+
+  return Number(
+    invoice.amount ??
+    invoice.subtotal ??
+    calculatedAmount
+  ) || 0
 }
 
-// Tổng doanh thu
+// Thống kê tổng quan
 const totalRevenue = computed(() =>
   paidInvoices.value.reduce(
     (sum, invoice) => sum + getInvoiceAmount(invoice),
@@ -127,29 +133,30 @@ const totalRevenue = computed(() =>
   )
 )
 
-// Tổng số hóa đơn
-const totalInvoices = computed(() => paidInvoices.value.length)
+const totalInvoices = computed(() =>
+  paidInvoices.value.length
+)
 
-// Giá trị hóa đơn trung bình
 const averageRevenue = computed(() =>
   totalInvoices.value
     ? totalRevenue.value / totalInvoices.value
     : 0
 )
 
-// Tổng lượt khách từ hóa đơn
 const totalCustomers = computed(() =>
   paidInvoices.value.reduce(
-    (sum, invoice) => sum + Number(invoice.guests || 1),
+    (sum, invoice) => sum + Math.max(0, Number(invoice.guests || 1)),
     0
   )
 )
 
-// Định dạng tiền Việt Nam
-const formatMoney = (value) =>
-  new Intl.NumberFormat('vi-VN').format(value) + ' đ'
+function formatMoney(value) {
+  return new Intl.NumberFormat('vi-VN').format(
+    Number(value || 0)
+  ) + ' đ'
+}
 
-// Thống kê doanh thu từng ngày
+// Tổng hợp doanh thu từng ngày
 const reports = computed(() => {
   const dailyData = {}
 
@@ -175,19 +182,22 @@ const reports = computed(() => {
   )
 })
 
-// Dữ liệu biểu đồ
 const chartReports = computed(() => reports.value)
 
 const maxRevenue = computed(() =>
   Math.max(...chartReports.value.map(item => item.revenue), 1)
 )
 
-// Top 5 món ăn bán chạy từ hóa đơn đã thanh toán
+// Top 5 món ăn bán chạy
 const topFoods = computed(() => {
   const foods = {}
 
   paidInvoices.value.forEach(invoice => {
-    ;(invoice.items || []).forEach(item => {
+    const items = Array.isArray(invoice.items)
+      ? invoice.items
+      : []
+
+    items.forEach(item => {
       const name = item.name || 'Món ăn không tên'
 
       if (!foods[name]) {
@@ -208,7 +218,6 @@ const topFoods = computed(() => {
     .sort((a, b) => b.quantity - a.quantity)
     .slice(0, 5)
 })
-
 </script>
 
 <template>
@@ -231,21 +240,21 @@ const topFoods = computed(() => {
         <div class="stat-icon green">₫</div>
         <span>Tổng doanh thu</span>
         <h2>{{ formatMoney(totalRevenue) }}</h2>
-       <small>Doanh thu đã thanh toán trong kỳ</small>
+        <small>Doanh thu đã thanh toán trong kỳ</small>
       </div>
 
       <div class="stat-card">
         <div class="stat-icon blue">▤</div>
         <span>Tổng hóa đơn</span>
         <h2>{{ totalInvoices }}</h2>
-        <small>Hóa đơn trong kỳ</small>
+        <small>Hóa đơn đã thanh toán trong kỳ</small>
       </div>
 
       <div class="stat-card">
         <div class="stat-icon orange">◉</div>
         <span>Khách hàng</span>
-       <h2>{{ totalCustomers }}</h2>
-<small>Lượt khách trong kỳ</small>
+        <h2>{{ totalCustomers }}</h2>
+        <small>Lượt khách trong kỳ</small>
       </div>
 
       <div class="stat-card">
@@ -266,10 +275,14 @@ const topFoods = computed(() => {
           <span class="unit-label">VNĐ</span>
         </div>
 
-        <div class="chart">
+        <div v-if="chartReports.length === 0" class="empty-state">
+          Chưa có doanh thu đã thanh toán trong kỳ.
+        </div>
+
+        <div v-else class="chart">
           <div
             v-for="item in chartReports"
-            :key="item.date"
+            :key="item.fullDate"
             class="chart-column"
           >
             <span class="chart-value">
@@ -298,7 +311,11 @@ const topFoods = computed(() => {
           </div>
         </div>
 
-        <div class="food-list">
+        <div v-if="topFoods.length === 0" class="empty-state">
+          Chưa có dữ liệu món ăn đã bán trong kỳ.
+        </div>
+
+        <div v-else class="food-list">
           <div
             v-for="(food, index) in topFoods"
             :key="food.name"
@@ -339,14 +356,23 @@ const topFoods = computed(() => {
           </thead>
 
           <tbody>
-            <tr v-for="item in chartReports" :key="item.date">
-             <td>{{ item.fullDate.split('-').reverse().join('/') }}</td>
+            <tr
+              v-for="item in chartReports"
+              :key="item.fullDate"
+            >
+              <td>{{ item.fullDate.split('-').reverse().join('/') }}</td>
               <td>{{ item.invoices }}</td>
               <td class="revenue-text">
                 {{ formatMoney(item.revenue) }}
               </td>
               <td>
                 <span class="completed">Đã tổng hợp</span>
+              </td>
+            </tr>
+
+            <tr v-if="chartReports.length === 0">
+              <td colspan="4" class="empty-state">
+                Chưa có dữ liệu doanh thu trong kỳ.
               </td>
             </tr>
           </tbody>
@@ -466,10 +492,12 @@ const topFoods = computed(() => {
   gap: 12px;
   border-bottom: 1px solid #e5ece7;
   padding: 0 5px;
+  overflow-x: auto;
 }
 
 .chart-column {
   height: 100%;
+  min-width: 35px;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -521,6 +549,7 @@ const topFoods = computed(() => {
   background: #e5f4e9;
   color: #237a50;
   font-weight: bold;
+  flex-shrink: 0;
 }
 
 .food-info {
@@ -580,6 +609,13 @@ td {
   color: #237a50;
   padding: 6px 9px;
   font-size: 11px;
+}
+
+.empty-state {
+  text-align: center;
+  color: #829087;
+  padding: 25px;
+  font-size: 13px;
 }
 
 @media (max-width: 1100px) {

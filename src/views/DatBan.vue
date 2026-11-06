@@ -1,38 +1,73 @@
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useTableStore } from '../stores/tableStore.js'
 
 const tableStore = useTableStore()
 const keyword = ref('')
 
+const BOOKING_DURATION = 120
+const ARRIVAL_GRACE_PERIOD = 15
+
+// Lấy ngày theo giờ máy tính, tránh sai lệch múi giờ
+const getLocalDate = (date = new Date()) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+
+  return `${year}-${month}-${day}`
+}
+
 // Ngày đặt bàn sớm nhất: ngày mai
 const minBookingDate = computed(() => {
   const tomorrow = new Date()
   tomorrow.setDate(tomorrow.getDate() + 1)
-
-  const year = tomorrow.getFullYear()
-  const month = String(tomorrow.getMonth() + 1).padStart(2, '0')
-  const day = String(tomorrow.getDate()).padStart(2, '0')
-
-  return `${year}-${month}-${day}`
+  return getLocalDate(tomorrow)
 })
 
-// Danh sách bàn còn trống
-const availableTables = computed(() =>
-  tableStore.tables.filter(table => table.status === 'Trống')
-)
+// Chuyển giờ HH:mm thành số phút
+const timeToMinutes = (time) => {
+  if (!time || !/^\d{2}:\d{2}$/.test(time)) return null
 
-// Form đặt bàn
-const form = ref({
-  customer: '',
-  phone: '',
-  date: '',
-  time: '',
-  guests: 2,
-  table: '',
-  note: ''
-})
+  const [hours, minutes] = time.split(':').map(Number)
+
+  if (hours > 23 || minutes > 59) return null
+
+  return hours * 60 + minutes
+}
+
+// Chuyển ngày và giờ thành timestamp
+const getBookingTimestamp = (date, time) => {
+  if (!date || timeToMinutes(time) === null) return null
+
+  const [year, month, day] = date.split('-').map(Number)
+  const [hours, minutes] = time.split(':').map(Number)
+
+  const result = new Date(year, month - 1, day, hours, minutes, 0, 0)
+
+  if (
+    result.getFullYear() !== year ||
+    result.getMonth() !== month - 1 ||
+    result.getDate() !== day
+  ) {
+    return null
+  }
+
+  return result.getTime()
+}
+
+// Tính giờ kết thúc
+const getEndTime = (time) => {
+  const start = timeToMinutes(time)
+
+  if (start === null) return ''
+
+  const end = start + BOOKING_DURATION
+  const hours = String(Math.floor(end / 60) % 24).padStart(2, '0')
+  const minutes = String(end % 60).padStart(2, '0')
+
+  return `${hours}:${minutes}`
+}
 
 // Đọc dữ liệu đặt bàn
 const loadBookings = () => {
@@ -73,83 +108,287 @@ const loadBookings = () => {
 
 const bookings = ref(loadBookings())
 
-// Tự động lưu dữ liệu
+// Lưu dữ liệu
 watch(
   bookings,
   (newBookings) => {
-    localStorage.setItem(
-      'restaurant_bookings',
-      JSON.stringify(newBookings)
-    )
+    try {
+      localStorage.setItem(
+        'restaurant_bookings',
+        JSON.stringify(newBookings)
+      )
+
+      window.dispatchEvent(
+        new Event('restaurantBookingsUpdated')
+      )
+    } catch (error) {
+      console.error('Không thể lưu phiếu đặt bàn:', error)
+    }
   },
   { deep: true }
 )
 
+// Kiểm tra hai khung giờ có bị trùng không
+// Hỗ trợ cả trường hợp qua ngày mới
+const isTimeOverlapping = (dateA, timeA, dateB, timeB) => {
+  const startA = getBookingTimestamp(dateA, timeA)
+  const startB = getBookingTimestamp(dateB, timeB)
+
+  if (startA === null || startB === null) return false
+
+  const endA = startA + BOOKING_DURATION * 60 * 1000
+  const endB = startB + BOOKING_DURATION * 60 * 1000
+
+  return startA < endB && startB < endA
+}
+
+// Kiểm tra bàn đã có lịch đặt hay chưa
+const hasBookingConflict = (tableName, date, time) => {
+  return bookings.value.some((booking) => {
+    if (
+      booking.table !== tableName ||
+      ['Đã hủy', 'Hoàn thành'].includes(booking.status)
+    ) {
+      return false
+    }
+
+    return isTimeOverlapping(
+      booking.date,
+      booking.time,
+      date,
+      time
+    )
+  })
+}
+
+// Tự động hủy phiếu quá 15 phút
+const expireOverdueBookings = () => {
+  const now = Date.now()
+  let hasExpired = false
+
+  bookings.value.forEach((booking) => {
+    if (
+      !['Chờ xác nhận', 'Đã xác nhận'].includes(booking.status)
+    ) {
+      return
+    }
+
+    const bookingTime = getBookingTimestamp(
+      booking.date,
+      booking.time
+    )
+
+    if (bookingTime === null) return
+
+    const expirationTime =
+      bookingTime + ARRIVAL_GRACE_PERIOD * 60 * 1000
+
+    if (now >= expirationTime) {
+      booking.status = 'Đã hủy'
+      booking.cancelReason = 'Khách không đến trong 15 phút'
+      booking.expiredAt = new Date().toISOString()
+
+      hasExpired = true
+    }
+  })
+
+  if (hasExpired) {
+    console.log('Đã tự động hủy phiếu đặt bàn quá 15 phút.')
+  }
+}
+
+// Kiểm tra định kỳ
+let expirationTimer = null
+
+const handleVisibilityChange = () => {
+  if (!document.hidden) {
+    expireOverdueBookings()
+  }
+}
+
+const handleStorageChange = (event) => {
+  if (
+    event.key === 'restaurant_bookings' &&
+    event.newValue
+  ) {
+    try {
+      const data = JSON.parse(event.newValue)
+
+      if (Array.isArray(data)) {
+        bookings.value = data
+      }
+    } catch (error) {
+      console.error('Lỗi đồng bộ phiếu đặt bàn:', error)
+    }
+  }
+}
+
+onMounted(() => {
+  expireOverdueBookings()
+
+  expirationTimer = window.setInterval(() => {
+    expireOverdueBookings()
+  }, 15000)
+
+  document.addEventListener(
+    'visibilitychange',
+    handleVisibilityChange
+  )
+
+  window.addEventListener('storage', handleStorageChange)
+})
+
+onUnmounted(() => {
+  if (expirationTimer) {
+    clearInterval(expirationTimer)
+  }
+
+  document.removeEventListener(
+    'visibilitychange',
+    handleVisibilityChange
+  )
+
+  window.removeEventListener('storage', handleStorageChange)
+})
+
+// Form đặt bàn
+const form = ref({
+  customer: '',
+  phone: '',
+  date: '',
+  time: '',
+  guests: 2,
+  table: '',
+  note: ''
+})
+
+// Danh sách bàn còn trống và đủ chỗ
+const availableTables = computed(() => {
+  return tableStore.tables.filter((table) => {
+    if (table.status !== 'Trống') return false
+
+    if (table.seats < Number(form.value.guests || 1)) {
+      return false
+    }
+
+    if (form.value.date && form.value.time) {
+      return !hasBookingConflict(
+        table.name,
+        form.value.date,
+        form.value.time
+      )
+    }
+
+    return true
+  })
+})
+
 // Tìm kiếm phiếu đặt bàn
 const filteredBookings = computed(() => {
-  return bookings.value.filter(item =>
-    item.customer.toLowerCase().includes(keyword.value.toLowerCase()) ||
-    item.id.toLowerCase().includes(keyword.value.toLowerCase()) ||
-    item.phone.includes(keyword.value)
-  )
+  const search = keyword.value.toLowerCase().trim()
+
+  return bookings.value.filter((item) => {
+    return (
+      String(item.customer || '').toLowerCase().includes(search) ||
+      String(item.id || '').toLowerCase().includes(search) ||
+      String(item.phone || '').includes(search)
+    )
+  })
 })
 
 // Thêm phiếu đặt bàn
 const addBooking = () => {
-  if (
-    !form.value.customer.trim() ||
-    !form.value.phone.trim() ||
-    !form.value.date ||
-    !form.value.time ||
-    !form.value.table
-  ) {
+  expireOverdueBookings()
+
+  const customer = form.value.customer.trim()
+  const phone = form.value.phone.trim()
+  const date = form.value.date
+  const time = form.value.time
+  const guests = Number(form.value.guests)
+  const tableName = form.value.table
+
+  if (!customer || !phone || !date || !time || !tableName) {
     alert('Vui lòng nhập đầy đủ thông tin đặt bàn!')
     return
   }
 
-  if (form.value.date < minBookingDate.value) {
+  if (!/^0\d{9}$/.test(phone)) {
+    alert('Số điện thoại phải gồm 10 chữ số và bắt đầu bằng số 0!')
+    return
+  }
+
+  if (date < minBookingDate.value) {
     alert('Bạn phải đặt bàn trước ít nhất 1 ngày!')
     return
   }
 
-  if (form.value.guests < 1 || form.value.guests > 30) {
+  if (!Number.isInteger(guests) || guests < 1 || guests > 30) {
     alert('Số lượng khách phải từ 1 đến 30 người!')
     return
   }
 
-  // Kiểm tra bàn đã được đặt đúng ngày và giờ chưa
-  const isDuplicate = bookings.value.some(booking =>
-    booking.table === form.value.table &&
-    booking.date === form.value.date &&
-    booking.time === form.value.time &&
-    booking.status !== 'Đã hủy'
-  )
-
-  if (isDuplicate) {
-    alert('Bàn này đã có phiếu đặt vào thời gian bạn chọn. Vui lòng chọn bàn hoặc giờ khác!')
+  if (timeToMinutes(time) === null) {
+    alert('Vui lòng chọn giờ đặt bàn hợp lệ!')
     return
   }
 
+  const selectedTable = tableStore.tables.find(
+    (table) => table.name === tableName
+  )
+
+  if (!selectedTable || selectedTable.status !== 'Trống') {
+    alert('Bàn đã được sử dụng hoặc không còn khả dụng!')
+    return
+  }
+
+  if (selectedTable.seats < guests) {
+    alert('Số lượng chỗ ngồi của bàn không đủ!')
+    return
+  }
+
+  if (hasBookingConflict(tableName, date, time)) {
+    alert(
+      'Bàn đã có lịch đặt trong khung giờ này. ' +
+      'Mỗi lượt đặt bàn kéo dài 2 tiếng. Vui lòng chọn giờ khác!'
+    )
+    return
+  }
+
+  // Tạo mã phiếu tiếp theo
   const maxId = bookings.value.reduce((max, item) => {
-    const number = Number(item.id.replace('DB', ''))
-    return Math.max(max, number || 0)
+    const number = Number(
+      String(item.id || '').replace('DB', '')
+    )
+
+    return Math.max(max, Number.isFinite(number) ? number : 0)
   }, 0)
 
   const newId = 'DB' + String(maxId + 1).padStart(3, '0')
+  const endTime = getEndTime(time)
 
   bookings.value.push({
     id: newId,
-    customer: form.value.customer.trim(),
-    phone: form.value.phone.trim(),
-    date: form.value.date,
-    time: form.value.time,
-    guests: form.value.guests,
-    table: form.value.table,
-    note: form.value.note,
-    status: 'Chờ xác nhận'
+    customer,
+    phone,
+    date,
+    time,
+    endTime,
+    duration: BOOKING_DURATION,
+    arrivalGracePeriod: ARRIVAL_GRACE_PERIOD,
+    guests,
+    table: tableName,
+    note: form.value.note.trim(),
+    status: 'Chờ xác nhận',
+    createdAt: new Date().toISOString()
   })
 
-  alert('Đặt bàn thành công! Thông tin đã được lưu.')
+  alert(
+    `Đặt bàn thành công!\n` +
+    `Mã phiếu: ${newId}\n` +
+    `Bàn: ${tableName}\n` +
+    `Khung giờ: ${time} - ${endTime}\n` +
+    `Khách cần đến trong vòng 15 phút kể từ giờ đặt.`
+  )
 
   form.value = {
     customer: '',
@@ -162,16 +401,24 @@ const addBooking = () => {
   }
 }
 
-// Cập nhật trạng thái phiếu đặt bàn
+// Cập nhật trạng thái phiếu
 const updateStatus = (booking) => {
+  expireOverdueBookings()
+
+  if (booking.status === 'Đã hủy') {
+    alert('Phiếu đặt bàn đã bị hủy do khách không đến trong 15 phút!')
+    return
+  }
+
   if (booking.status === 'Chờ xác nhận') {
     booking.status = 'Đã xác nhận'
     alert('Đã xác nhận đặt bàn!')
+    return
   }
 
-  else if (booking.status === 'Đã xác nhận') {
+  if (booking.status === 'Đã xác nhận') {
     const table = tableStore.tables.find(
-      item => item.name === booking.table
+      (item) => item.name === booking.table
     )
 
     if (!table) {
@@ -179,50 +426,62 @@ const updateStatus = (booking) => {
       return
     }
 
-    if (table.status === 'Đang phục vụ') {
-      alert('Bàn hiện đang phục vụ một khách khác!')
+    if (table.status !== 'Trống') {
+      alert('Bàn hiện không còn trống!')
       return
     }
 
     booking.status = 'Đang phục vụ'
+    booking.arrivedAt = new Date().toISOString()
     table.status = 'Đang phục vụ'
 
-    alert('Đã xác nhận khách đến!')
+    alert('Đã xác nhận khách đến nhận bàn!')
+    return
   }
 
-  else if (booking.status === 'Đang phục vụ') {
+  if (booking.status === 'Đang phục vụ') {
     const table = tableStore.tables.find(
-      item => item.name === booking.table
+      (item) => item.name === booking.table
     )
 
     booking.status = 'Hoàn thành'
+    booking.completedAt = new Date().toISOString()
 
-    if (table) {
+    if (table && table.status === 'Đang phục vụ') {
       table.status = 'Trống'
     }
 
     alert('Đã hoàn thành phiếu đặt bàn!')
   }
 }
-localStorage.setItem(
-  'restaurant_bookings',
-  JSON.stringify(bookings.value)
-)
 
-window.dispatchEvent(new Event('restaurantBookingsUpdated'))
-
-// Hủy phiếu đặt bàn
+// Hủy phiếu thủ công
 const cancelBooking = (id) => {
-  const booking = bookings.value.find(item => item.id === id)
+  const booking = bookings.value.find(
+    (item) => item.id === id
+  )
 
   if (!booking) return
 
+  if (
+    !['Chờ xác nhận', 'Đã xác nhận'].includes(booking.status)
+  ) {
+    alert('Chỉ có thể hủy phiếu đang chờ hoặc đã xác nhận!')
+    return
+  }
+
   if (confirm('Bạn có chắc chắn muốn hủy phiếu đặt bàn này?')) {
     booking.status = 'Đã hủy'
+    booking.cancelReason = 'Nhân viên hủy phiếu'
+    booking.cancelledAt = new Date().toISOString()
+
     alert('Đã hủy phiếu đặt bàn!')
   }
 }
 </script>
+
+
+
 
 <template>
   <div class="booking-page">
@@ -274,14 +533,18 @@ const cancelBooking = (id) => {
             <small>Vui lòng đặt bàn trước ít nhất 1 ngày.</small>
           </div>
 
-          <div class="form-group">
-            <label>Giờ đặt bàn</label>
-            <input
-              v-model="form.time"
-              type="time"
-              required
-            />
-          </div>
+         <div class="form-group">
+          <label>Giờ đặt bàn</label>
+          <input
+            v-model="form.time"
+            type="time"
+            required
+          />
+          <small>
+            Mỗi lượt đặt cách nhau 2 tiếng. Khách cần đến trong
+            vòng 15 phút kể từ giờ đặt, nếu không phiếu sẽ tự động hủy.
+          </small>
+        </div>
 
           <div class="form-group">
             <label>Số lượng khách</label>

@@ -1,18 +1,26 @@
-
 <script setup>
 import { ref, computed } from 'vue'
-import { useOrderStore } from '../stores/orderStore'
+import { useOrderStore } from '../stores/orderStore.js'
+import { useTableStore } from '../stores/tableStore.js'
 
 const orderStore = useOrderStore()
+const tableStore = useTableStore()
+
+// Lưu đơn gọi món vào localStorage
 orderStore.$subscribe((mutation, state) => {
   localStorage.setItem(
     'restaurantOrders',
     JSON.stringify(state.orders)
   )
 })
-const tables = ['Bàn 01', 'Bàn 02', 'Bàn 03', 'Bàn 04', 'Bàn 05', 'Bàn 06']
 
-const defaultmenu = [
+// Danh sách bàn lấy trực tiếp từ quản lý bàn
+const tables = computed(() =>
+  tableStore.tables.map(table => table.name)
+)
+
+// Danh sách món mặc định
+const defaultMenu = [
   { id: 'MA001', name: 'Cơm chiên hải sản', price: 65000 },
   { id: 'MA002', name: 'Bò lúc lắc', price: 85000 },
   { id: 'MA003', name: 'Gà chiên nước mắm', price: 60000 },
@@ -24,30 +32,55 @@ const defaultmenu = [
   { id: 'MA017', name: 'Chè ba màu', price: 25000 },
   { id: 'MA020', name: 'Trà đào cam sả', price: 40000 }
 ]
-const savedMenu = JSON.parse(
-  localStorage.getItem('restaurantMenu') || 'null'
-)
 
-const menu = ref(savedMenu || defaultMenu)
+// Đọc thực đơn đã lưu
+function loadMenu() {
+  try {
+    const saved = localStorage.getItem('restaurantMenu')
+
+    if (saved) {
+      const parsed = JSON.parse(saved)
+
+      if (Array.isArray(parsed)) {
+        return parsed
+      }
+    }
+  } catch (error) {
+    console.error('Lỗi đọc thực đơn:', error)
+  }
+
+  return defaultMenu
+}
+
+const menu = ref(loadMenu())
 
 const selectedTable = ref('Bàn 01')
 const selectedFood = ref('')
 const quantity = ref(1)
-function decreaseQuantity() {
-  if (quantity.value > 1) {
-    quantity.value--
-  }
-}
 
-function increaseQuantity() {
-  quantity.value++
-}
 const search = ref('')
 const orderSearch = ref('')
 const statusFilter = ref('Tất cả')
 
+// Danh sách đơn gọi món
 const orders = computed(() => orderStore.orders)
+const filteredOrders = computed(() => {
+  return orders.value.filter(order => {
+    const keyword = orderSearch.value.toLowerCase().trim()
 
+    const matchSearch =
+      String(order.id || '').toLowerCase().includes(keyword) ||
+      String(order.table || '').toLowerCase().includes(keyword)
+
+    const matchStatus =
+      statusFilter.value === 'Tất cả' ||
+      order.status === statusFilter.value
+
+    return matchSearch && matchStatus
+  })
+})
+
+// Tìm kiếm món ăn
 const filteredMenu = computed(() => {
   return menu.value.filter(food => {
     const isSelling = food.status !== 'Ngừng bán'
@@ -60,38 +93,42 @@ const filteredMenu = computed(() => {
   })
 })
 
+// Thống kê
 const totalPrice = computed(() => orderStore.totalPrice)
-
 const totalOrders = computed(() => orderStore.totalOrders)
-
-const filteredOrders = computed(() => {
-  return orders.value.filter(order => {
-    const keyword = orderSearch.value.toLowerCase()
-
-    const matchSearch =
-      order.id.toLowerCase().includes(keyword) ||
-      order.table.toLowerCase().includes(keyword)
-
-    const matchStatus =
-      statusFilter.value === 'Tất cả' ||
-      order.status === statusFilter.value
-
-    return matchSearch && matchStatus
-  })
-})
-
-
 const pendingOrders = computed(() => orderStore.pendingOrders)
-
 const cookingOrders = computed(() => orderStore.cookingOrders)
 
+// Định dạng tiền
 function formatMoney(value) {
-  return Number(value).toLocaleString('vi-VN') + 'đ'
+  return Number(value || 0).toLocaleString('vi-VN') + 'đ'
 }
 
+// Tăng giảm số lượng món
+function decreaseQuantity() {
+  if (quantity.value > 1) {
+    quantity.value--
+  }
+}
+
+function increaseQuantity() {
+  quantity.value++
+}
+
+// Thêm món vào đơn
 function addFood() {
   if (!selectedFood.value || quantity.value < 1) {
     alert('Vui lòng chọn món ăn và số lượng hợp lệ!')
+    return
+  }
+
+  if (!Number.isInteger(Number(quantity.value))) {
+    alert('Số lượng phải là số nguyên!')
+    return
+  }
+
+  if (!tables.value.includes(selectedTable.value)) {
+    alert('Bàn không tồn tại trong hệ thống!')
     return
   }
 
@@ -104,10 +141,15 @@ function addFood() {
     return
   }
 
+  if (food.status === 'Ngừng bán') {
+    alert('Món ăn hiện đã ngừng bán!')
+    return
+  }
+
   orderStore.addFood(
     selectedTable.value,
     food,
-    quantity.value
+    Number(quantity.value)
   )
 
   selectedFood.value = ''
@@ -116,35 +158,73 @@ function addFood() {
   alert('Đã thêm món vào đơn gọi món!')
 }
 
+// Xóa món khỏi đơn
 function removeFood(order, index) {
-  if (confirm('Bạn có chắc chắn muốn xóa món này?')) {
-    order.items.splice(index, 1)
-
-    if (order.items.length === 0) {
-      orders.value = orders.value.filter(item => item.id !== order.id)
-    }
-  }
-}
-function changeQuantity(order, item, amount) {
-  if (order.status === 'Đã phục vụ' || order.status === 'Đã hủy') {
+  if (
+    order.status === 'Đã phục vụ' ||
+    order.status === 'Đã hủy'
+  ) {
     alert('Không thể chỉnh sửa đơn này!')
     return
   }
 
-  item.quantity += amount
+  if (confirm('Bạn có chắc chắn muốn xóa món này?')) {
+    order.items.splice(index, 1)
 
-  if (item.quantity <= 0) {
-    removeFood(order, order.items.indexOf(item))
+    // Nếu đơn không còn món thì xóa đơn
+    if (order.items.length === 0) {
+      orderStore.orders = orderStore.orders.filter(
+        item => item.id !== order.id
+      )
+    }
   }
 }
 
-function updateStatus(order) {
-  orderStore.updateStatus(order.id)
+// Thay đổi số lượng món
+function changeQuantity(order, item, amount) {
+  if (
+    order.status === 'Đã phục vụ' ||
+    order.status === 'Đã hủy'
+  ) {
+    alert('Không thể chỉnh sửa đơn này!')
+    return
+  }
 
+  const newQuantity = Number(item.quantity) + amount
+
+  if (newQuantity <= 0) {
+    order.items = order.items.filter(
+      food => food !== item
+    )
+
+    if (order.items.length === 0) {
+      orderStore.orders = orderStore.orders.filter(
+        current => current.id !== order.id
+      )
+    }
+
+    return
+  }
+
+  item.quantity = newQuantity
 }
+
+// Cập nhật trạng thái đơn
+function updateStatus(order) {
+  const result = orderStore.updateStatus(order.id)
+
+  if (result === false) {
+    alert('Không thể cập nhật trạng thái đơn hàng.')
+  }
+}
+
+// Hủy đơn gọi món
 function cancelOrder(order) {
-  if (order.status === 'Đã phục vụ') {
-    alert('Đơn đã phục vụ, không thể hủy!')
+  if (
+    order.status === 'Đã phục vụ' ||
+    order.status === 'Đã hủy'
+  ) {
+    alert('Không thể hủy đơn này!')
     return
   }
 
@@ -154,21 +234,36 @@ function cancelOrder(order) {
   }
 }
 
+// Tính tổng tiền từng đơn
 function orderTotal(order) {
-  return order.items.reduce((sum, item) =>
-    sum + item.price * item.quantity, 0
-  )
+  return order.items.reduce((sum, item) => {
+    return sum + Number(item.price) * Number(item.quantity)
+  }, 0)
 }
+
+// Xuất hóa đơn
 function createInvoice(order) {
   if (order.status !== 'Đã phục vụ') {
     alert('Chỉ có thể xuất hóa đơn khi đơn đã phục vụ!')
     return
   }
 
-  const savedInvoices = JSON.parse(
-    localStorage.getItem('restaurantInvoices') || '[]'
-  )
+  let savedInvoices = []
 
+  try {
+    savedInvoices = JSON.parse(
+      localStorage.getItem('restaurantInvoices') || '[]'
+    )
+
+    if (!Array.isArray(savedInvoices)) {
+      savedInvoices = []
+    }
+  } catch (error) {
+    console.error('Lỗi đọc hóa đơn:', error)
+    savedInvoices = []
+  }
+
+  // Kiểm tra đơn đã xuất hóa đơn chưa
   const exists = savedInvoices.some(
     invoice => invoice.orderId === order.id
   )
@@ -178,16 +273,25 @@ function createInvoice(order) {
     return
   }
 
+  const today = new Date()
+
   const invoice = {
     id: 'HD' + Date.now(),
     orderId: order.id,
     table: order.table,
-    items: order.items.map(item => ({ ...item })),
+
+    items: order.items.map(item => ({
+      ...item
+    })),
+
     amount: orderTotal(order),
+    subtotal: orderTotal(order),
     guests: order.guests || 1,
-    createdAt: order.createdAt || new Date().toISOString().slice(0, 10),
-    status: 'Chưa thanh toán',
-    date: new Date().toLocaleString('vi-VN')
+
+    createdAt: today.toISOString().slice(0, 10),
+    date: today.toLocaleString('vi-VN'),
+
+    status: 'Chưa thanh toán'
   }
 
   savedInvoices.push(invoice)
@@ -195,6 +299,11 @@ function createInvoice(order) {
   localStorage.setItem(
     'restaurantInvoices',
     JSON.stringify(savedInvoices)
+  )
+
+  // Thông báo cho Dashboard và các trang liên quan
+  window.dispatchEvent(
+    new Event('restaurantInvoicesUpdated')
   )
 
   alert('Xuất hóa đơn thành công!')
@@ -241,9 +350,13 @@ function createInvoice(order) {
         <div class="form-group">
           <label>Chọn bàn</label>
           <select v-model="selectedTable">
-            <option v-for="table in tables" :key="table">
-              {{ table }}
-            </option>
+            <option
+            v-for="table in tables"
+            :key="table"
+            :value="table"
+          >
+        {{ table }}
+</option>
           </select>
         </div>
 
@@ -333,12 +446,13 @@ function createInvoice(order) {
           </div>
 
           <span :class="[
-            'order-status',
-            order.status === 'Chờ xác nhận' ? 'pending' :
-           order.status === 'Đang chế biến' ? 'cooking' :
-order.status === 'Đã hủy' ? 'cancelled' : 'served'
-          ]">
-            {{ order.status }}
+  'order-status',
+  order.status === 'Chờ xác nhận' ? 'pending' :
+  order.status === 'Đã xác nhận' ? 'confirmed' :
+  order.status === 'Đang chế biến' ? 'cooking' :
+  order.status === 'Đã hủy' ? 'cancelled' : 'served'
+]"  >
+            {{ order.status }}  
           </span>
         </div>
 
@@ -799,5 +913,9 @@ order.status === 'Đã hủy' ? 'cancelled' : 'served'
 .quantity-input button:hover {
   background: #237a50;
   color: white;
+}
+.confirmed {
+  background: #fef3c7;
+  color: #92400e;
 }
 </style>

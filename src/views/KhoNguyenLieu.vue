@@ -1,6 +1,6 @@
 
 <script setup>
-import { ref, computed , watch} from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 
 const defaultIngredients = [
   {
@@ -81,7 +81,187 @@ function loadIngredients() {
 }
 
 const ingredients = ref(loadIngredients())
+// ===============================
+// QUẢN LÝ CÔNG THỨC MÓN ĂN
+// ===============================
 
+const defaultMenu = [
+  { id: 'MA001', name: 'Cơm chiên hải sản' },
+  { id: 'MA002', name: 'Bò lúc lắc' },
+  { id: 'MA003', name: 'Gà chiên nước mắm' },
+  { id: 'MA004', name: 'Canh chua cá' },
+  { id: 'MA007', name: 'Phở bò' },
+  { id: 'MA008', name: 'Bún bò Huế' },
+  { id: 'MA010', name: 'Gỏi cuốn tôm thịt' },
+  { id: 'MA016', name: 'Lẩu Thái hải sản' },
+  { id: 'MA017', name: 'Chè ba màu' },
+  { id: 'MA020', name: 'Trà đào cam sả' }
+]
+
+function loadMenu() {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem('restaurantMenu') || 'null'
+    )
+
+    if (Array.isArray(saved) && saved.length) return saved
+  } catch (error) {
+    console.error('Lỗi đọc thực đơn:', error)
+  }
+
+  return defaultMenu
+}
+
+const menuItems = ref(loadMenu())
+
+function loadRecipes() {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem('restaurantRecipes') || '[]'
+    )
+
+    return Array.isArray(saved) ? saved : []
+  } catch (error) {
+    console.error('Lỗi đọc công thức:', error)
+    return []
+  }
+}
+
+const recipes = ref(loadRecipes())
+
+watch(
+  recipes,
+  (value) => {
+    localStorage.setItem('restaurantRecipes', JSON.stringify(value))
+  },
+  { deep: true }
+)
+
+const recipeFoodId = ref('')
+const recipeIngredientId = ref('')
+const recipeQuantity = ref(0)
+
+const recipeDraft = ref([])
+const editingRecipeId = ref(null)
+
+const selectedRecipeFood = computed(() =>
+  menuItems.value.find(item => item.id === recipeFoodId.value)
+)
+
+const currentRecipe = computed(() =>
+  recipes.value.find(item => item.foodId === recipeFoodId.value)
+)
+
+function selectRecipeFood() {
+  editingRecipeId.value = null
+
+  const existing = currentRecipe.value
+
+  recipeDraft.value = existing
+    ? existing.ingredients.map(item => ({ ...item }))
+    : []
+}
+
+function addRecipeIngredient() {
+  const ingredient = ingredients.value.find(
+    item => item.id === recipeIngredientId.value
+  )
+
+  const amount = Number(recipeQuantity.value)
+
+  if (!recipeFoodId.value) {
+    alert('Vui lòng chọn món ăn!')
+    return
+  }
+
+  if (!ingredient) {
+    alert('Vui lòng chọn nguyên liệu!')
+    return
+  }
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert('Định lượng phải lớn hơn 0!')
+    return
+  }
+
+  const existing = recipeDraft.value.find(
+    item => item.ingredientId === ingredient.id
+  )
+
+  if (existing) {
+    existing.quantity += amount
+  } else {
+    recipeDraft.value.push({
+      ingredientId: ingredient.id,
+      ingredientName: ingredient.name,
+      quantity: amount,
+      unit: ingredient.unit
+    })
+  }
+
+  recipeIngredientId.value = ''
+  recipeQuantity.value = 0
+}
+
+function removeRecipeIngredient(ingredientId) {
+  recipeDraft.value = recipeDraft.value.filter(
+    item => item.ingredientId !== ingredientId
+  )
+}
+
+function saveRecipe() {
+  const food = selectedRecipeFood.value
+
+  if (!food) {
+    alert('Vui lòng chọn món ăn!')
+    return
+  }
+
+  if (recipeDraft.value.length === 0) {
+    alert('Vui lòng thêm ít nhất một nguyên liệu!')
+    return
+  }
+
+  const recipe = {
+    foodId: food.id,
+    foodName: food.name,
+    ingredients: recipeDraft.value.map(item => ({ ...item })),
+    updatedAt: new Date().toISOString()
+  }
+
+  const index = recipes.value.findIndex(
+    item => item.foodId === food.id
+  )
+
+  if (index !== -1) {
+    recipes.value[index] = recipe
+  } else {
+    recipes.value.push(recipe)
+  }
+
+  alert('Đã lưu công thức món ăn!')
+  recipeDraft.value = []
+  recipeFoodId.value = ''
+}
+
+function editRecipe(recipe) {
+  recipeFoodId.value = recipe.foodId
+  editingRecipeId.value = recipe.foodId
+  recipeDraft.value = recipe.ingredients.map(item => ({ ...item }))
+}
+
+function deleteRecipe(foodId) {
+  if (!confirm('Bạn có chắc muốn xóa công thức món ăn này?')) return
+
+  recipes.value = recipes.value.filter(
+    item => item.foodId !== foodId
+  )
+
+  if (recipeFoodId.value === foodId) {
+    recipeFoodId.value = ''
+    recipeDraft.value = []
+  }
+}
 watch(
   ingredients,
   (newIngredients) => {
@@ -135,7 +315,16 @@ function loadStockHistory() {
 }
 
 const stockHistory = ref(loadStockHistory())
+function refreshStockHistory() {
+  stockHistory.value = loadStockHistory()
+  ingredients.value = loadIngredients()
+}
 
+window.addEventListener('restaurantStockUpdated', refreshStockHistory)
+
+onUnmounted(() => {
+  window.removeEventListener('restaurantStockUpdated', refreshStockHistory)
+})
 watch(
   stockHistory,
   (newHistory) => {
@@ -493,7 +682,160 @@ function saveStock() {
     </table>
   </div>
 </div>
+<!-- QUẢN LÝ CÔNG THỨC MÓN ĂN -->
+<div class="content-card recipe-card">
+  <div class="history-heading">
+    <div>
+      <h2>Định lượng công thức món ăn</h2>
+      <p>Khai báo lượng nguyên liệu cần dùng cho một phần ăn</p>
+    </div>
+    <span>{{ recipes.length }} công thức</span>
+  </div>
 
+  <div class="recipe-form">
+    <div class="form-group">
+      <label>Chọn món ăn</label>
+      <select v-model="recipeFoodId" @change="selectRecipeFood">
+        <option value="">-- Chọn món ăn --</option>
+        <option
+          v-for="food in menuItems"
+          :key="food.id"
+          :value="food.id"
+        >
+          {{ food.name }}
+        </option>
+      </select>
+    </div>
+
+    <div class="recipe-add-row">
+      <div class="form-group">
+        <label>Nguyên liệu</label>
+        <select v-model="recipeIngredientId">
+          <option value="">-- Chọn nguyên liệu --</option>
+          <option
+            v-for="ingredient in ingredients"
+            :key="ingredient.id"
+            :value="ingredient.id"
+          >
+            {{ ingredient.name }} ({{ ingredient.unit }})
+          </option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Định lượng / phần</label>
+        <input
+          v-model.number="recipeQuantity"
+          type="number"
+          min="0.001"
+          step="0.001"
+          placeholder="Ví dụ: 0.15"
+        />
+      </div>
+
+      <button class="btn-primary recipe-add-btn" @click="addRecipeIngredient">
+        + Thêm nguyên liệu
+      </button>
+    </div>
+
+    <div v-if="recipeFoodId" class="recipe-draft">
+      <h3>
+        Công thức:
+        {{ selectedRecipeFood?.name }}
+      </h3>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Nguyên liệu</th>
+            <th>Định lượng cho 1 phần</th>
+            <th>Thao tác</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          <tr
+            v-for="item in recipeDraft"
+            :key="item.ingredientId"
+          >
+            <td>{{ item.ingredientName }}</td>
+            <td>{{ item.quantity }} {{ item.unit }}</td>
+            <td>
+              <button
+                class="btn-delete"
+                @click="removeRecipeIngredient(item.ingredientId)"
+              >
+                Xóa
+              </button>
+            </td>
+          </tr>
+
+          <tr v-if="recipeDraft.length === 0">
+            <td colspan="3" class="empty">
+              Chưa có nguyên liệu trong công thức.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="recipe-save">
+        <button class="btn-primary" @click="saveRecipe">
+          Lưu công thức
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-wrapper recipe-list">
+    <h3>Danh sách công thức đã khai báo</h3>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Mã món</th>
+          <th>Tên món ăn</th>
+          <th>Nguyên liệu sử dụng</th>
+          <th>Thao tác</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        <tr v-for="recipe in recipes" :key="recipe.foodId">
+          <td>{{ recipe.foodId }}</td>
+          <td class="item-name">{{ recipe.foodName }}</td>
+          <td>
+            <div
+              v-for="item in recipe.ingredients"
+              :key="item.ingredientId"
+            >
+              {{ item.ingredientName }}:
+              {{ item.quantity }} {{ item.unit }}
+            </div>
+          </td>
+          <td>
+            <div class="actions">
+              <button class="btn-edit" @click="editRecipe(recipe)">
+                Sửa
+              </button>
+              <button
+                class="btn-delete"
+                @click="deleteRecipe(recipe.foodId)"
+              >
+                Xóa
+              </button>
+            </div>
+          </td>
+        </tr>
+
+        <tr v-if="recipes.length === 0">
+          <td colspan="4" class="empty">
+            Chưa có công thức. Hãy chọn món ăn và khai báo nguyên liệu.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
 
 <!-- Form thêm và chỉnh sửa nguyên liệu -->
 <div v-if="showForm" class="modal-overlay">
@@ -1019,6 +1361,104 @@ td {
   color: #89958d;
   font-size: 14px;
 }
+/* QUẢN LÝ CÔNG THỨC */
+.recipe-card {
+  margin-top: 22px;
+}
 
+.history-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.history-heading h2 {
+  margin: 0 0 7px;
+  color: #185c3b;
+  font-size: 20px;
+}
+
+.history-heading p {
+  margin: 0;
+  color: #7b8980;
+  font-size: 13px;
+}
+
+.history-heading > span {
+  color: #237a50;
+  background: #e5f4e9;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.recipe-form {
+  background: #f7faf7;
+  border: 1px solid #e2ece5;
+  padding: 18px;
+  margin-bottom: 25px;
+}
+
+.recipe-add-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: end;
+  gap: 15px;
+}
+
+.recipe-add-btn {
+  height: 43px;
+  margin-bottom: 8px;
+  white-space: nowrap;
+}
+
+.recipe-draft {
+  margin-top: 20px;
+  background: white;
+  padding: 15px;
+  border: 1px solid #e2ece5;
+}
+
+.recipe-draft h3,
+.recipe-list h3 {
+  color: #237a50;
+  font-size: 16px;
+  margin: 0 0 15px;
+}
+
+.recipe-save {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 15px;
+}
+
+.recipe-list {
+  margin-top: 20px;
+}
+
+.recipe-list table {
+  min-width: 700px;
+}
+
+.recipe-list td {
+  line-height: 1.8;
+}
+
+@media (max-width: 750px) {
+  .recipe-add-row {
+    grid-template-columns: 1fr;
+  }
+
+  .recipe-add-btn {
+    width: 100%;
+    margin-bottom: 0;
+  }
+
+  .history-heading {
+    align-items: flex-start;
+  }
+}
 }
 </style>
