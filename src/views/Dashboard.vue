@@ -1,6 +1,19 @@
 
 <script setup>
+import { useRouter } from 'vue-router'
 
+const router = useRouter()
+
+function logout() {
+  const confirmed = confirm('Bạn có chắc chắn muốn đăng xuất không?')
+
+  if (!confirmed) return
+
+  localStorage.removeItem('restaurantUser')
+  sessionStorage.removeItem('restaurantUser')
+
+  router.push('/login')
+}
 </script>
 
 <template>
@@ -29,7 +42,11 @@
     <strong>Admin</strong>
     <small>Quản trị viên</small>
   </div>
-  <button class="logout">Đăng xuất</button>
+<button class="logout-btn" @click="logout">
+  <span>↪</span>
+  Đăng xuất
+
+</button>
 </div>
 
     </aside>
