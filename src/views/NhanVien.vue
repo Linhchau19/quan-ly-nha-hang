@@ -360,28 +360,54 @@ function deleteEmployee(id) {
   color: #84918a;
 }
 
+/* 3 THANH THỐNG KÊ */
 .stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 18px;
-  margin-bottom: 25px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  gap: 12px;
+  margin: 0 0 32px 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-.stat-card,
-.content-card {
+.stat-card {
+  width: 100%;
+  min-width: 0;
+  min-height: 12px;
+  box-sizing: border-box;
   background: white;
-  padding: 22px;
-  border: 1px solid #e5eee8;
-  border-radius: 8px;
+  padding: 25px 30px;
+  border: 1px solid #e0ebe3;
+  border-radius: 0;
+  box-shadow: 0 4px 12px rgba(35, 122, 80, 0.06);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  transition: 0.25s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 7px 18px rgba(35, 122, 80, 0.12);
 }
 
 .stat-card span {
   color: #84918a;
+  font-size: 15px;
 }
 
 .stat-card h2 {
   margin: 12px 0 0;
   color: #237a50;
+  font-size: 30px;
+  font-weight: 700;
+}
+@media (max-width: 768px) {
+  .stats {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
 }
 
 .toolbar {
@@ -389,7 +415,7 @@ function deleteEmployee(id) {
   justify-content: space-between;
   align-items: center;
   gap: 15px;
-  margin-bottom: 20px;
+  margin-bottom: 30px;
 }
 
 .toolbar h3 {

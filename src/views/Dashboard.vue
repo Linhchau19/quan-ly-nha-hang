@@ -1,5 +1,6 @@
-
 <script setup>
+
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
@@ -14,47 +15,74 @@ function logout() {
 
   router.push('/login')
 }
+const currentUser = ref({
+  name: 'Nhân viên',
+  role: 'Nhân viên'
+})
+
+onMounted(() => {
+  const savedUser =
+    localStorage.getItem('restaurantUser') ||
+    sessionStorage.getItem('restaurantUser')
+
+  if (savedUser) {
+    try {
+      const user = JSON.parse(savedUser)
+
+      currentUser.value = {
+        name: user.name || user.fullName || user.username || 'Nhân viên',
+        role: user.role || user.position || 'Nhân viên'
+      }
+    } catch (error) {
+      console.error('Lỗi đọc thông tin tài khoản:', error)
+    }
+  }
+})
+
 </script>
+
 
 <template>
   <div class="dashboard">
     <aside class="sidebar">
       <h2>🍴 Nhà Hàng</h2>
-      <p class="subtitle"> GREEN FOOD</p>
-<nav>
-  <RouterLink to="/tong-quan">Tổng quan</RouterLink>
-  <RouterLink to="/quan-ly-ban">Quản lý bàn</RouterLink>
-  <RouterLink to="/dat-ban">Đặt bàn</RouterLink>
-  <RouterLink to="/thuc-don">Quản lý thực đơn</RouterLink>
-  <RouterLink to="/goi-mon">Quản lý gọi món</RouterLink>
-  <RouterLink to="/hoa-don">Hóa đơn</RouterLink>
-  <RouterLink to="/khach-hang">Khách hàng</RouterLink>
-  <RouterLink to="/nhan-vien">Nhân viên</RouterLink>
-  <RouterLink to="/kho-nguyen-lieu">Kho nguyên liệu</RouterLink>
-  <RouterLink to="/bao-cao">Báo cáo thống kê</RouterLink>
-  <RouterLink to="/cai-dat">Cài đặt hệ thống</RouterLink>
-  <RouterLink to="/ai-suggestion">✨ AI Suggestion</RouterLink>
-</nav>  
-<div class="user">
-  <div class="avatar">A</div>
+      <p class="subtitle">GREEN FOOD</p>
 
-  <div class="user-info">
-    <strong>Admin</strong>
-    <small>Quản trị viên</small>
-  </div>
-<button class="logout-btn" @click="logout">
-  <span>↪</span>
-  Đăng xuất
+      <nav>
+        <RouterLink to="/tong-quan">Tổng quan</RouterLink>
+        <RouterLink to="/quan-ly-ban">Quản lý bàn</RouterLink>
+        <RouterLink to="/dat-ban">Đặt bàn</RouterLink>
+        <RouterLink to="/thuc-don">Quản lý thực đơn</RouterLink>
+        <RouterLink to="/goi-mon">Quản lý gọi món</RouterLink>
+        <RouterLink to="/hoa-don">Hóa đơn</RouterLink>
+        <RouterLink to="/khach-hang">Khách hàng</RouterLink>
+        <RouterLink to="/nhan-vien">Nhân viên</RouterLink>
+        <RouterLink to="/kho-nguyen-lieu">Kho nguyên liệu</RouterLink>
+        <RouterLink to="/bao-cao">Báo cáo thống kê</RouterLink>
+        <RouterLink to="/cai-dat">Cài đặt hệ thống</RouterLink>
+        <RouterLink to="/ai-suggestion">✨ AI Suggestion</RouterLink>
+      </nav>
 
-</button>
-</div>
+      <div class="user">
+        <div class="avatar">
+          {{ currentUser.name?.charAt(0).toUpperCase() || 'N' }}
+        </div>
 
+        <div class="user-info">
+          <strong>{{ currentUser.name || 'Nhân viên' }}</strong>
+          <small>{{ currentUser.role || 'Nhân viên' }}</small>
+        </div>
+
+        <button class="logout-btn" @click="logout">
+          <span>↪</span>
+          Đăng xuất
+        </button>
+      </div>
     </aside>
 
     <main class="main">
-  <router-view />
-</main>
-
+      <router-view />
+    </main>
   </div>
 </template>
 
@@ -373,4 +401,49 @@ input:focus {
     flex-direction: column;
   }
 }
+
+/* ===== ĐIỀU CHỈNH GIAO DIỆN TỔNG QUAN ===== */
+
+/* 5 thẻ thống kê trên 1 hàng */
+:deep(.stats) {
+  display: grid !important;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  gap: 16px;
+  width: 100%;
+}
+
+/* 4 bàn ăn trên 1 hàng */
+:deep(.table-grid) {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 18px;
+  width: 100%;
+}
+
+/* Màn hình vừa */
+@media (max-width: 1200px) {
+  :deep(.stats) {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  :deep(.table-grid) {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+}
+
+/* Màn hình nhỏ */
+@media (max-width: 768px) {
+  :deep(.stats),
+  :deep(.table-grid) {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 480px) {
+  :deep(.stats),
+  :deep(.table-grid) {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 </style>

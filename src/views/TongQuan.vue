@@ -1,3 +1,4 @@
+
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useTableStore } from '../stores/tableStore'
@@ -8,20 +9,23 @@ const tableStore = useTableStore()
 // Đọc dữ liệu hóa đơn đã lưu
 const loadInvoices = () => {
   try {
-    return JSON.parse(
+    const data = JSON.parse(
       localStorage.getItem('restaurantInvoices') || '[]'
     )
+    return Array.isArray(data) ? data : []
   } catch (error) {
     console.error('Lỗi đọc hóa đơn:', error)
     return []
   }
 }
+
 // Đọc danh sách đặt bàn
 const loadBookings = () => {
   try {
-    return JSON.parse(
+    const data = JSON.parse(
       localStorage.getItem('restaurant_bookings') || '[]'
     )
+    return Array.isArray(data) ? data : []
   } catch (error) {
     console.error('Lỗi đọc đặt bàn:', error)
     return []
@@ -29,13 +33,17 @@ const loadBookings = () => {
 }
 
 const bookings = ref(loadBookings())
+const invoices = ref(loadInvoices())
 
 // Cập nhật danh sách đặt bàn
 const refreshBookings = () => {
   bookings.value = loadBookings()
 }
 
-const invoices = ref(loadInvoices())
+// Cập nhật hóa đơn
+const refreshInvoices = () => {
+  invoices.value = loadInvoices()
+}
 
 // Lấy ngày hiện tại theo giờ địa phương
 const getToday = () => {
@@ -48,15 +56,13 @@ const getToday = () => {
   ].join('-')
 }
 
-// Cập nhật hóa đơn khi có thanh toán mới
-const refreshInvoices = () => {
-  invoices.value = loadInvoices()
-}
+// Theo dõi dữ liệu thay đổi
 onMounted(() => {
   window.addEventListener(
     'restaurantInvoicesUpdated',
     refreshInvoices
   )
+
   window.addEventListener('storage', refreshInvoices)
 
   window.addEventListener(
@@ -70,6 +76,7 @@ onUnmounted(() => {
     'restaurantInvoicesUpdated',
     refreshInvoices
   )
+
   window.removeEventListener('storage', refreshInvoices)
 
   window.removeEventListener(
@@ -78,41 +85,11 @@ onUnmounted(() => {
   )
 })
 
-// Tính doanh thu hôm nay
-const todayRevenue = computed(() => {
-  const today = getToday()
-
-  return invoices.value
-    .filter(invoice => {
-      if (invoice.status !== 'Đã thanh toán') {
-        return false
-      }
-
-      // Ưu tiên ngày thanh toán
-      if (invoice.paidAt) {
-        return invoice.paidAt === today
-      }
-
-      // Hỗ trợ hóa đơn cũ có ngày dạng YYYY-MM-DD
-      return invoice.date?.slice(0, 10) === today
-    })
-    .reduce((sum, invoice) => {
-      const amount = Number(
-        invoice.amount ?? invoice.subtotal ?? 0
-      )
-
-      return sum + amount
-    }, 0)
-})
-
-// Định dạng tiền Việt Nam
-const formatMoney = amount =>
-  new Intl.NumberFormat('vi-VN').format(amount) + ' đ'
 // Tổng số khách đã đến nhà hàng hôm nay
 const customerVisits = computed(() => {
   const today = getToday()
 
-  // Khách từ đơn gọi món
+  // Khách từ hóa đơn
   const orderCustomers = invoices.value
     .filter(invoice =>
       invoice.createdAt === today &&
@@ -122,7 +99,7 @@ const customerVisits = computed(() => {
       return sum + Number(invoice.guests || 1)
     }, 0)
 
-  // Khách từ đặt bàn đã đến nhưng chưa có hóa đơn
+  // Khách đặt bàn đã đến nhưng chưa có hóa đơn
   const bookingCustomers = bookings.value
     .filter(booking =>
       booking.date === today &&
@@ -139,13 +116,17 @@ const customerVisits = computed(() => {
   return orderCustomers + bookingCustomers
 })
 
+// Danh sách bàn
 const tables = tableStore.tables
 
+// Tìm kiếm bàn
 const filteredTables = computed(() =>
   tables.filter(table =>
     table.name.toLowerCase().includes(keyword.value.toLowerCase())
   )
 )
+
+// Thống kê tổng quan
 const stats = computed(() => [
   {
     title: 'Tổng số bàn',
@@ -160,12 +141,8 @@ const stats = computed(() => [
     value: tableStore.emptyTables
   },
   {
-  title: 'Bàn đã đặt',
-  value: tableStore.bookedTables
-},
-  {
-    title: 'Doanh thu hôm nay',
-    value: formatMoney(todayRevenue.value)
+    title: 'Bàn đã đặt',
+    value: tableStore.bookedTables
   },
   {
     title: 'Khách hàng lượt ghé',
@@ -173,6 +150,7 @@ const stats = computed(() => [
   }
 ])
 </script>
+
 <template>
   <div class="overview">
     <header class="topbar">
@@ -182,6 +160,7 @@ const stats = computed(() => [
       </div>
     </header>
 
+    <!-- Thống kê tổng quan -->
     <section class="stats">
       <div
         v-for="item in stats"
@@ -193,6 +172,7 @@ const stats = computed(() => [
       </div>
     </section>
 
+    <!-- Trạng thái bàn ăn -->
     <section class="content-card">
       <div class="section-heading">
         <div>
@@ -232,7 +212,6 @@ const stats = computed(() => [
 </template>
 
 <style scoped>
-
 .overview {
   color: #1F2937;
 }
@@ -252,7 +231,8 @@ const stats = computed(() => [
   gap: 20px;
   margin-bottom: 30px;
 }
-/* Dashboard và khung nội dung góc vuông */
+
+/* Khung thống kê và nội dung */
 .stat-card,
 .content-card {
   background: white;
@@ -298,13 +278,13 @@ const stats = computed(() => [
   border-color: #237A50;
 }
 
+/* Danh sách bàn */
 .table-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 18px;
 }
 
-/* Thẻ bàn góc vuông */
 .table-card {
   background: #F8FBF9;
   border: 1px solid #E2EDE5;
@@ -335,6 +315,7 @@ const stats = computed(() => [
   color: #1D4ED8;
 }
 
+/* Responsive */
 @media (max-width: 1100px) {
   .stats {
     grid-template-columns: repeat(2, 1fr);
@@ -356,6 +337,5 @@ const stats = computed(() => [
     flex-direction: column;
   }
 }
-
 
 </style>

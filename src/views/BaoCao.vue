@@ -150,6 +150,7 @@ const totalCustomers = computed(() =>
   )
 )
 
+// Định dạng tiền
 function formatMoney(value) {
   return new Intl.NumberFormat('vi-VN').format(
     Number(value || 0)
@@ -188,6 +189,55 @@ const maxRevenue = computed(() =>
   Math.max(...chartReports.value.map(item => item.revenue), 1)
 )
 
+// Tổng doanh thu được hiển thị trên biểu đồ
+const chartTotalRevenue = computed(() =>
+  chartReports.value.reduce(
+    (sum, item) => sum + item.revenue,
+    0
+  )
+)
+
+// Ngày có doanh thu cao nhất
+const highestRevenueDay = computed(() => {
+  if (!chartReports.value.length) return null
+
+  return [...chartReports.value].sort(
+    (a, b) => b.revenue - a.revenue
+  )[0]
+})
+
+// Dữ liệu biểu đồ có cả ngày không phát sinh doanh thu
+const chartDays = computed(() => {
+  const { start, end } = dateRange.value
+  const result = []
+
+  const current = new Date(`${start}T12:00:00`)
+  const last = new Date(`${end}T12:00:00`)
+
+  while (current <= last) {
+    const dateKey = [
+      current.getFullYear(),
+      String(current.getMonth() + 1).padStart(2, '0'),
+      String(current.getDate()).padStart(2, '0')
+    ].join('-')
+
+    const existing = chartReports.value.find(
+      item => item.fullDate === dateKey
+    )
+
+    result.push({
+      fullDate: dateKey,
+      date: dateKey.slice(8, 10) + '/' + dateKey.slice(5, 7),
+      revenue: existing?.revenue || 0,
+      invoices: existing?.invoices || 0
+    })
+
+    current.setDate(current.getDate() + 1)
+  }
+
+  return result
+})
+
 // Top 5 món ăn bán chạy
 const topFoods = computed(() => {
   const foods = {}
@@ -209,6 +259,7 @@ const topFoods = computed(() => {
       }
 
       foods[name].quantity += Number(item.quantity || 0)
+
       foods[name].revenue +=
         Number(item.price || 0) * Number(item.quantity || 0)
     })
@@ -222,6 +273,8 @@ const topFoods = computed(() => {
 
 <template>
   <div class="report-page">
+
+    <!-- Tiêu đề -->
     <div class="page-header">
       <div>
         <h1>Báo cáo thống kê</h1>
@@ -235,7 +288,9 @@ const topFoods = computed(() => {
       </select>
     </div>
 
+    <!-- Thống kê tổng quan -->
     <div class="stats-grid">
+
       <div class="stat-card">
         <div class="stat-icon green">₫</div>
         <span>Tổng doanh thu</span>
@@ -263,80 +318,124 @@ const topFoods = computed(() => {
         <h2>{{ formatMoney(averageRevenue) }}</h2>
         <small>Giá trị hóa đơn trung bình</small>
       </div>
+
     </div>
 
-    <div class="report-grid">
-      <section class="report-card revenue-card">
-        <div class="section-heading">
-          <div>
-            <h2>Biểu đồ doanh thu</h2>
-            <p>Doanh thu theo từng ngày</p>
+    <!-- Sơ đồ doanh thu -->
+    <section class="report-card main-revenue-card">
+
+      <div class="section-heading">
+        <div>
+          <h2>Biểu đồ doanh thu</h2>
+          <p>Trực quan hóa doanh thu theo từng ngày trong kỳ</p>
+        </div>
+
+        <span class="unit-label">VNĐ</span>
+      </div>
+
+      <!-- Tổng kết doanh thu -->
+      <div class="revenue-summary">
+        <div>
+          <span>Tổng doanh thu trong kỳ</span>
+          <h2>{{ formatMoney(chartTotalRevenue) }}</h2>
+        </div>
+
+        <div v-if="highestRevenueDay" class="highest-day">
+          <span>Ngày doanh thu cao nhất</span>
+          <strong>{{ highestRevenueDay.date }}</strong>
+          <b>{{ formatMoney(highestRevenueDay.revenue) }}</b>
+        </div>
+      </div>
+
+      <!-- Biểu đồ cột -->
+      <div v-if="chartDays.length" class="revenue-chart">
+
+        <div class="chart-y-label">Doanh thu (VNĐ)</div>
+
+        <div class="chart-area">
+
+          <div class="chart-grid-lines">
+            <div class="grid-line" v-for="i in 5" :key="i"></div>
           </div>
-          <span class="unit-label">VNĐ</span>
-        </div>
 
-        <div v-if="chartReports.length === 0" class="empty-state">
-          Chưa có doanh thu đã thanh toán trong kỳ.
-        </div>
-
-        <div v-else class="chart">
           <div
-            v-for="item in chartReports"
+            v-for="item in chartDays"
             :key="item.fullDate"
             class="chart-column"
+            :title="`Ngày ${item.date}: ${formatMoney(item.revenue)} | ${item.invoices} hóa đơn`"
           >
-            <span class="chart-value">
-              {{ (item.revenue / 1000000).toFixed(1) }}tr
-            </span>
+            <div class="bar-value">
+              {{ item.revenue ? (item.revenue / 1000000).toFixed(2) + 'tr' : '' }}
+            </div>
 
-            <div class="bar-area">
+            <div class="bar-container">
               <div
-                class="bar"
+                class="revenue-bar"
+                :class="{ 'no-revenue': !item.revenue }"
                 :style="{
                   height: (item.revenue / maxRevenue * 100) + '%'
                 }"
               ></div>
             </div>
 
-            <span class="chart-date">{{ item.date }}</span>
+            <span class="bar-date">{{ item.date }}</span>
           </div>
-        </div>
-      </section>
 
-      <section class="report-card">
-        <div class="section-heading">
-          <div>
-            <h2>Món ăn bán chạy</h2>
-            <p>Top 5 món được gọi nhiều nhất</p>
+        </div>
+
+        <div class="chart-note">
+          <span class="note-dot"></span>
+          Doanh thu từ hóa đơn đã thanh toán
+        </div>
+
+      </div>
+
+      <div v-else class="empty-state">
+        Chưa có dữ liệu doanh thu trong kỳ.
+      </div>
+
+    </section>
+
+    <!-- Món ăn bán chạy -->
+    <section class="report-card food-card">
+
+      <div class="section-heading">
+        <div>
+          <h2>Món ăn bán chạy</h2>
+          <p>Top 5 món được gọi nhiều nhất</p>
+        </div>
+      </div>
+
+      <div v-if="topFoods.length === 0" class="empty-state">
+        Chưa có dữ liệu món ăn đã bán trong kỳ.
+      </div>
+
+      <div v-else class="food-list">
+
+        <div
+          v-for="(food, index) in topFoods"
+          :key="food.name"
+          class="food-item"
+        >
+          <div class="food-rank">{{ index + 1 }}</div>
+
+          <div class="food-info">
+            <strong>{{ food.name }}</strong>
+            <span>{{ food.quantity }} phần đã bán</span>
           </div>
+
+          <strong class="food-revenue">
+            {{ formatMoney(food.revenue) }}
+          </strong>
         </div>
 
-        <div v-if="topFoods.length === 0" class="empty-state">
-          Chưa có dữ liệu món ăn đã bán trong kỳ.
-        </div>
+      </div>
 
-        <div v-else class="food-list">
-          <div
-            v-for="(food, index) in topFoods"
-            :key="food.name"
-            class="food-item"
-          >
-            <div class="food-rank">{{ index + 1 }}</div>
+    </section>
 
-            <div class="food-info">
-              <strong>{{ food.name }}</strong>
-              <span>{{ food.quantity }} phần đã bán</span>
-            </div>
-
-            <strong class="food-revenue">
-              {{ formatMoney(food.revenue) }}
-            </strong>
-          </div>
-        </div>
-      </section>
-    </div>
-
+    <!-- Chi tiết doanh thu -->
     <section class="report-card detail-card">
+
       <div class="section-heading">
         <div>
           <h2>Chi tiết doanh thu</h2>
@@ -362,9 +461,11 @@ const topFoods = computed(() => {
             >
               <td>{{ item.fullDate.split('-').reverse().join('/') }}</td>
               <td>{{ item.invoices }}</td>
+
               <td class="revenue-text">
                 {{ formatMoney(item.revenue) }}
               </td>
+
               <td>
                 <span class="completed">Đã tổng hợp</span>
               </td>
@@ -378,7 +479,9 @@ const topFoods = computed(() => {
           </tbody>
         </table>
       </div>
+
     </section>
+
   </div>
 </template>
 
@@ -387,6 +490,7 @@ const topFoods = computed(() => {
   color: #25352d;
 }
 
+/* Tiêu đề */
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -413,8 +517,10 @@ const topFoods = computed(() => {
   border: 1px solid #dce6df;
   background: white;
   color: #365443;
+  outline: none;
 }
 
+/* Thẻ thống kê */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -439,10 +545,25 @@ const topFoods = computed(() => {
   margin-bottom: 13px;
 }
 
-.green { background: #e5f4e9; color: #237a50; }
-.blue { background: #e8efff; color: #4166a8; }
-.orange { background: #fff2dc; color: #b7791f; }
-.purple { background: #f0eafe; color: #7652b5; }
+.green {
+  background: #e5f4e9;
+  color: #237a50;
+}
+
+.blue {
+  background: #e8efff;
+  color: #4166a8;
+}
+
+.orange {
+  background: #fff2dc;
+  color: #b7791f;
+}
+
+.purple {
+  background: #f0eafe;
+  color: #7652b5;
+}
 
 .stat-card span {
   color: #718078;
@@ -453,6 +574,7 @@ const topFoods = computed(() => {
   color: #237a50;
   font-size: 21px;
   margin: 10px 0 6px;
+  overflow-wrap: anywhere;
 }
 
 .stat-card small {
@@ -460,13 +582,7 @@ const topFoods = computed(() => {
   font-size: 12px;
 }
 
-.report-grid {
-  display: grid;
-  grid-template-columns: 1.15fr 1fr;
-  gap: 18px;
-  margin-bottom: 20px;
-}
-
+/* Khung báo cáo */
 .section-heading {
   display: flex;
   justify-content: space-between;
@@ -482,50 +598,164 @@ const topFoods = computed(() => {
 .unit-label {
   color: #237a50;
   font-size: 12px;
+  font-weight: 600;
 }
 
-.chart {
-  height: 230px;
+/* Tổng kết doanh thu */
+.main-revenue-card {
+  margin-bottom: 22px;
+}
+
+.revenue-summary {
   display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 20px;
+  margin-bottom: 25px;
+  background: #f0f7f2;
+  border-left: 4px solid #237a50;
+}
+
+.revenue-summary span {
+  display: block;
+  color: #718078;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.revenue-summary h2 {
+  color: #237a50;
+  font-size: 27px;
+  margin: 0;
+}
+
+.highest-day {
+  display: flex;
+  flex-direction: column;
   align-items: flex-end;
+  gap: 5px;
+}
+
+.highest-day strong {
+  color: #25352d;
+  font-size: 15px;
+}
+
+.highest-day b {
+  color: #237a50;
+  font-size: 14px;
+}
+
+/* Biểu đồ doanh thu */
+.revenue-chart {
+  width: 100%;
+  padding: 10px 5px 0;
+}
+
+.chart-y-label {
+  color: #829087;
+  font-size: 11px;
+  margin-bottom: 10px;
+}
+
+.chart-area {
+  position: relative;
+  height: 290px;
+  display: flex;
+  align-items: stretch;
   justify-content: space-around;
-  gap: 12px;
-  border-bottom: 1px solid #e5ece7;
-  padding: 0 5px;
+  gap: 8px;
+  border-bottom: 1px solid #dce6df;
   overflow-x: auto;
 }
 
+.chart-grid-lines {
+  position: absolute;
+  inset: 0 0 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.grid-line {
+  width: 100%;
+  border-top: 1px dashed #e7eee9;
+}
+
 .chart-column {
-  height: 100%;
+  position: relative;
+  z-index: 1;
   min-width: 35px;
   flex: 1;
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  cursor: pointer;
 }
 
-.chart-value,
-.chart-date {
-  font-size: 11px;
-  color: #718078;
+.bar-value {
+  height: 24px;
+  color: #237a50;
+  font-size: 10px;
+  font-weight: 600;
   white-space: nowrap;
 }
 
-.bar-area {
-  height: 160px;
+.bar-container {
   width: 100%;
+  height: 220px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
 }
 
-.bar {
-  width: min(48px, 75%);
+.revenue-bar {
+  width: min(45px, 75%);
   min-height: 4px;
-  background: linear-gradient(180deg, #52a879, #237a50);
-  transition: height 0.3s ease;
+  background: linear-gradient(180deg, #69b98a, #237a50);
+  transition: height 0.3s ease, opacity 0.2s ease;
+}
+
+.chart-column:hover .revenue-bar {
+  opacity: 0.75;
+}
+
+.revenue-bar.no-revenue {
+  background: #e5ede7;
+  height: 3px !important;
+}
+
+.bar-date {
+  height: 30px;
+  padding-top: 9px;
+  color: #718078;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.chart-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #829087;
+  font-size: 12px;
+  margin-top: 15px;
+}
+
+.note-dot {
+  width: 9px;
+  height: 9px;
+  background: #237a50;
+  border-radius: 50%;
+}
+
+/* Món ăn bán chạy */
+.food-card {
+  margin-bottom: 22px;
 }
 
 .food-list {
@@ -575,6 +805,7 @@ const topFoods = computed(() => {
   white-space: nowrap;
 }
 
+/* Bảng chi tiết */
 .table-wrapper {
   overflow-x: auto;
 }
@@ -618,13 +849,10 @@ td {
   font-size: 13px;
 }
 
+/* Responsive */
 @media (max-width: 1100px) {
   .stats-grid {
     grid-template-columns: repeat(2, 1fr);
-  }
-
-  .report-grid {
-    grid-template-columns: 1fr;
   }
 }
 
@@ -636,6 +864,24 @@ td {
   .page-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .revenue-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .highest-day {
+    align-items: flex-start;
+  }
+
+  .chart-area {
+    justify-content: flex-start;
+    min-width: 100%;
+  }
+
+  .chart-column {
+    min-width: 42px;
   }
 }
 </style>

@@ -1,4 +1,3 @@
-
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 
@@ -14,7 +13,11 @@ const paymentMethod = ref('cash')
 const cashReceived = ref('')
 const paymentError = ref('')
 
-// CẤU HÌNH NGÂN HÀNG - BỔ SUNG SAU
+// Nhận diện khách hàng thành viên
+const registeredCustomers = ref([])
+const customerPhone = ref('')
+
+// CẤU HÌNH NGÂN HÀNG
 const BANK_ID = 'TPB'
 const BANK_ACCOUNT = '05597520801'
 const BANK_ACCOUNT_NAME = 'BUI CHAU HOAI LINH'
@@ -81,6 +84,7 @@ function loadInvoices() {
 
     if (saved !== null) {
       const parsed = JSON.parse(saved)
+
       if (Array.isArray(parsed)) {
         return parsed.map(normalizeInvoice)
       }
@@ -98,6 +102,48 @@ function refreshInvoices() {
   invoices.value = loadInvoices()
 }
 
+// Đọc danh sách khách hàng thành viên
+function loadRegisteredCustomers() {
+  try {
+    const saved = localStorage.getItem('restaurantCustomers')
+    const parsed = JSON.parse(saved || '[]')
+
+    return Array.isArray(parsed) ? parsed : []
+  } catch (error) {
+    console.error('Lỗi đọc danh sách thành viên:', error)
+    return []
+  }
+}
+
+// Chuẩn hóa số điện thoại để so sánh
+function normalizePhone(phone) {
+  return String(phone || '').replace(/\D/g, '')
+}
+
+// Tìm khách hàng theo số điện thoại
+const matchedCustomer = computed(() => {
+  const phone = normalizePhone(customerPhone.value)
+
+  if (!phone) return null
+
+  return registeredCustomers.value.find(customer =>
+    normalizePhone(customer.phone) === phone
+  ) || null
+})
+
+// Thông báo nhận diện thành viên
+const customerLookupMessage = computed(() => {
+  if (!customerPhone.value.trim()) {
+    return 'Nhập số điện thoại để kiểm tra thành viên'
+  }
+
+  if (matchedCustomer.value) {
+    return 'Đã tìm thấy thành viên!'
+  }
+
+  return 'Số điện thoại chưa đăng ký thành viên'
+})
+
 onMounted(() => {
   window.addEventListener('restaurantInvoicesUpdated', refreshInvoices)
   window.addEventListener('storage', refreshInvoices)
@@ -108,7 +154,7 @@ onUnmounted(() => {
   window.removeEventListener('storage', refreshInvoices)
 })
 
-// Tìm kiếm
+// Tìm kiếm hóa đơn
 const filteredInvoices = computed(() => {
   const searchText = keyword.value.toLowerCase().trim()
 
@@ -137,14 +183,18 @@ const revenue = computed(() =>
 const formatMoney = amount =>
   new Intl.NumberFormat('vi-VN').format(Number(amount || 0)) + ' đ'
 
-// Mở thanh toán
+// Mở cửa sổ thanh toán
 function payInvoice(invoice) {
   if (invoice.status !== 'Chưa thanh toán') return
 
   paymentInvoice.value = invoice
   paymentMethod.value = 'cash'
   cashReceived.value = ''
+  customerPhone.value = ''
   paymentError.value = ''
+
+  // Cập nhật danh sách thành viên mới nhất
+  registeredCustomers.value = loadRegisteredCustomers()
 }
 
 // Tính tiền thừa
@@ -176,7 +226,11 @@ function confirmPayment() {
   if (paymentMethod.value === 'cash') {
     const received = Number(cashReceived.value)
 
-    if (!cashReceived.value || !Number.isFinite(received) || received < invoice.amount) {
+    if (
+      !cashReceived.value ||
+      !Number.isFinite(received) ||
+      received < invoice.amount
+    ) {
       paymentError.value = 'Số tiền khách đưa chưa đủ!'
       return
     }
@@ -192,11 +246,22 @@ function confirmPayment() {
   if (!confirm(message)) return
 
   const now = new Date()
-
   const oldInvoice = { ...invoice }
+
+  // Lưu thông tin khách hàng thành viên vào hóa đơn
+  if (matchedCustomer.value) {
+    invoice.customer = matchedCustomer.value.name
+    invoice.customerId = matchedCustomer.value.id
+    invoice.customerPhone = matchedCustomer.value.phone
+  } else {
+    invoice.customer = 'Khách tại bàn'
+    invoice.customerId = ''
+    invoice.customerPhone = ''
+  }
 
   invoice.status = 'Đã thanh toán'
   invoice.paidAt = now.toISOString()
+
   invoice.paymentMethod = paymentMethod.value === 'cash'
     ? 'Tiền mặt'
     : 'Chuyển khoản QR'
@@ -210,20 +275,27 @@ function confirmPayment() {
   }
 
   try {
-    localStorage.setItem('restaurantInvoices', JSON.stringify(invoices.value))
+    localStorage.setItem(
+      'restaurantInvoices',
+      JSON.stringify(invoices.value)
+    )
 
+    // Thông báo cho trang khách hàng cập nhật dữ liệu
     window.dispatchEvent(new Event('restaurantInvoicesUpdated'))
 
     paymentInvoice.value = null
+    customerPhone.value = ''
+
     alert('Thanh toán thành công!')
   } catch (error) {
     Object.assign(invoice, oldInvoice)
+
     console.error('Lỗi lưu thanh toán:', error)
     alert('Không thể lưu thanh toán. Vui lòng thử lại!')
   }
 }
 
-// Xem chi tiết
+// Xem chi tiết hóa đơn
 function viewInvoice(invoice) {
   selectedInvoice.value = invoice
 }
@@ -346,6 +418,41 @@ function viewInvoice(invoice) {
           </div>
         </div>
 
+        <!-- NHẬN DIỆN KHÁCH HÀNG -->
+        <div class="member-section">
+          <label for="member-phone">Số điện thoại thành viên</label>
+
+          <input
+            id="member-phone"
+            v-model="customerPhone"
+            type="tel"
+            placeholder="Nhập số điện thoại khách hàng..."
+            autocomplete="tel"
+          />
+
+          <div
+            v-if="matchedCustomer"
+            class="member-result member-success"
+          >
+            <span> Đã nhận diện thành viên</span>
+            <strong>{{ matchedCustomer.name }}</strong>
+            <small>Mã thành viên: {{ matchedCustomer.id }}</small>
+            <small>Số điện thoại: {{ matchedCustomer.phone }}</small>
+          </div>
+
+          <div
+            v-else-if="customerPhone.trim()"
+            class="member-result member-warning"
+          >
+            {{ customerLookupMessage }}
+            <small>Bạn vẫn có thể tiếp tục thanh toán.</small>
+          </div>
+
+          <div v-else class="member-hint">
+            {{ customerLookupMessage }}
+          </div>
+        </div>
+
         <h3>Chọn phương thức thanh toán</h3>
 
         <div class="payment-methods">
@@ -452,6 +559,14 @@ function viewInvoice(invoice) {
         <p><strong>Ngày lập:</strong> {{ selectedInvoice.date }}</p>
         <p><strong>Bàn:</strong> {{ selectedInvoice.table }}</p>
 
+        <p v-if="selectedInvoice.customerId">
+          <strong>Mã thành viên:</strong> {{ selectedInvoice.customerId }}
+        </p>
+
+        <p v-if="selectedInvoice.customerPhone">
+          <strong>Số điện thoại:</strong> {{ selectedInvoice.customerPhone }}
+        </p>
+
         <h3 class="detail-title">Danh sách món ăn</h3>
 
         <div v-if="selectedInvoice.items?.length" class="detail-table-wrapper">
@@ -522,7 +637,6 @@ function viewInvoice(invoice) {
     </div>
   </div>
 </template>
-
 <style scoped>
 .invoice-page {
   color: #1F2937;
@@ -980,113 +1094,43 @@ tbody tr:hover td {
   color: #374151;
 }
 
-/* RESPONSIVE */
-@media (max-width: 900px) {
-  .summary {
-    grid-template-columns: repeat(2, 1fr);
-  }
+/* THỐNG KÊ HÓA ĐƠN */
+.summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 0 25px 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-@media (max-width: 600px) {
-  .summary {
-    grid-template-columns: 1fr;
-  }
-
-  .section-heading {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .section-heading input {
-    width: 100%;
-    box-sizing: border-box;
-  }
+.summary-card {
+  width: 100%;
+  min-width: 0;
+  min-height: 115px;
+  background: #FFFFFF;
+  padding: 22px;
+  border: 1px solid #E2EDE5;
+  box-shadow: 0 4px 12px rgba(17, 24, 39, 0.04);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
-/* CHẾ ĐỘ IN */
-@media print {
-  body * {
-    visibility: hidden !important;
-  }
+.summary-card span {
+  color: #64748B;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
 
-  .invoice-detail,
-  .invoice-detail * {
-    visibility: visible !important;
-  }
-
-  .modal-overlay {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 100% !important;
-    height: auto !important;
-    background: white !important;
-    padding: 0 !important;
-    display: block !important;
-  }
-
-  .invoice-detail {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 100% !important;
-    max-width: none !important;
-    margin: 0 !important;
-    padding: 15px !important;
-    box-shadow: none !important;
-    border: none !important;
-    color: black !important;
-    background: white !important;
-  }
-
-  .invoice-actions {
-    display: none !important;
-  }
-
-  .detail-table-wrapper {
-    width: 100% !important;
-    overflow: visible !important;
-  }
-
-  .detail-table {
-    width: 100% !important;
-    min-width: 0 !important;
-    max-width: 100% !important;
-    table-layout: fixed !important;
-    font-size: 10px !important;
-  }
-
-  .detail-table th,
-  .detail-table td {
-    padding: 4px 2px !important;
-    font-size: 10px !important;
-    overflow-wrap: anywhere !important;
-    color: black !important;
-  }
-
-  .detail-table th:nth-child(1),
-  .detail-table td:nth-child(1) {
-    width: 30% !important;
-  }
-
-  .detail-table th:nth-child(2),
-  .detail-table td:nth-child(2) {
-    width: 23% !important;
-  }
-
-  .detail-table th:nth-child(3),
-  .detail-table td:nth-child(3) {
-    width: 12% !important;
-  }
-
-  .detail-table th:nth-child(4),
-  .detail-table td:nth-child(4) {
-    width: 35% !important;
-  }
-
-  @page {
-    size: A4;
-    margin: 15mm;
-  }
+.summary-card h2 {
+  color: #237A50;
+  font-size: 23px;
+  margin: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 </style>
